@@ -41,11 +41,11 @@ if uploaded_file is not None:
         powiazania = linkage(krzywe_skalowane, method='ward')
         numery_grup = fcluster(powiazania, t=liczba_grup, criterion='maxclust')
         
-    # Przygotowanie tabeli z wynikami
+    # Uproszczone nazwy kolumn, aby uniknąć błędów renderowania w przeglądarce
     wyniki = pd.DataFrame({
-        'Nazwa_Krzywej': nazwy_krzywych,
-        f'Grupa_{metoda}': numery_grup
-    }).sort_values(by=f'Grupa_{metoda}')
+        'Krzywa': nazwy_krzywych,
+        'Numer Grupy': numery_grup
+    }).sort_values(by='Numer Grupy')
     
     # GŁÓWNY PANEL APLIKACJI (ZOPTYMALIZOWANY UKŁAD)
     col1, col2 = st.columns([3.5, 1])
@@ -70,7 +70,7 @@ if uploaded_file is not None:
     with col2:
         st.subheader("📋 Przypisanie")
         
-        # Tabela z ograniczoną wysokością i wewnętrznym suwakiem
+        # Tabela wyświetli się teraz poprawnie dzięki prostym nazwom kolumn
         st.dataframe(wyniki, use_container_width=True, hide_index=True, height=380)
         
         # Generowanie pliku Excel do pobrania w pamięci RAM
@@ -78,7 +78,6 @@ if uploaded_file is not None:
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
             wyniki.to_excel(writer, index=False)
         
-        # Przycisk pobierania dopasowany do szerokości kolumny
         st.download_button(
             label="📥 Pobierz wyniki jako Excel",
             data=buffer.getvalue(),
