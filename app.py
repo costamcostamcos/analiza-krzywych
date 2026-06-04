@@ -33,7 +33,7 @@ if uploaded_file is not None:
     metoda = st.sidebar.selectbox("Wybierz metodę grupowania:", ["K-means", "Hierarchiczna (Euklidesowa)"])
     liczba_grup = st.sidebar.slider("Wybierz liczbę grup (K):", min_value=2, max_value=10, value=4)
     
-    # OBLICZENIA
+    # OBLICZENIA GŁÓWNE
     if metoda == "K-means":
         model = KMeans(n_clusters=liczba_grup, random_state=42, n_init=10)
         numery_grup = model.fit_predict(krzywe_skalowane) + 1
@@ -47,6 +47,35 @@ if uploaded_file is not None:
         'Numer Grupy': numery_grup
     }).sort_values(by='Numer Grupy')
     
+    # =================================================================
+    # NOWOŚĆ: SEKCJA PODPOWIEDZI MATEMATYCZNEJ (METODA ŁOKCIA)
+    # =================================================================
+    if metoda == "K-means":
+        with st.expander("🔍 Podpowiedź matematyczna: Ile grup wybrać? (Metoda Łokcia)"):
+            st.write("Poniższy wykres pokazuje, jak zmienia się spójność grup przy różnej liczbie klastrów. "
+                     "**Szukaj punktu, w którym linia gwałtownie się załamuje (tworzy 'łokieć').** "
+                     "To optymalna matematycznie liczba grup dla Twoich danych.")
+            
+            # Obliczanie inercji dla K od 2 do 10
+            inercja = []
+            zakres_k = range(2, 11)
+            for k in zakres_k:
+                km = KMeans(n_clusters=k, random_state=42, n_init=5)
+                km.fit(krzywe_skalowane)
+                inercja.append(km.inertia_)
+            
+            # Rysowanie małego wykresu łokcia
+            fig_elbow, ax_elbow = plt.subplots(figsize=(10, 3))
+            ax_elbow.plot(zakres_k, inercja, 'ro-', linewidth=2, markersize=6)
+            ax_elbow.set_xlabel('Liczba grup (K)')
+            ax_elbow.set_ylabel('Inercja (Suma odległości)')
+            ax_elbow.set_xticks(list(zakres_k))
+            ax_elbow.grid(True, linestyle='--', alpha=0.5)
+            
+            st.pyplot(fig_elbow)
+            plt.close(fig_elbow) # Czyszczenie pamięci podręcznej wykresu
+    # =================================================================
+
     # GŁÓWNY PANEL APLIKACJI (ZOPTYMALIZOWANY UKŁAD)
     col1, col2 = st.columns([3.5, 1])
     
@@ -66,11 +95,12 @@ if uploaded_file is not None:
             ax.set_title("Drzewo Podobieństwa (Dendrogram)")
             
         st.pyplot(fig)
+        plt.close(fig)
         
     with col2:
         st.subheader("📋 Przypisanie")
         
-        # Tabela wyświetli się teraz poprawnie dzięki prostym nazwom kolumn
+        # Tabela z ograniczoną wysokością
         st.dataframe(wyniki, use_container_width=True, hide_index=True, height=380)
         
         # Generowanie pliku Excel do pobrania w pamięci RAM
