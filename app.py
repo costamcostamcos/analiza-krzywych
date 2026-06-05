@@ -15,11 +15,44 @@ try:
 except ImportError:
     tslearn_dostepne = False
 
-# Konfiguracja strony
-st.set_page_config(page_title="Analizator Krzywych", layout="wide")
+# Bezpieczny import dla Głębokiego Uczenia (DEC / PyTorch)
+try:
+    import torch
+    import torch.nn as nn
+    import torch.optim as optim
+    pytorch_dostepne = True
+except ImportError:
+    pytorch_dostepne = False
 
-st.title("📊 Interaktywny Analizator Krzywych Pro")
-st.write("Wgraj plik Excel lub wklej link do Google Sheets. Aplikacja automatycznie odnajdzie start tabeli.")
+# =================================================================
+# KLASA SIECI NEURONOWEJ (AUTOENKODER DLA METODY DEC)
+# =================================================================
+if pytorch_dostepne:
+    class AutoencoderKrzywych(nn.Module):
+        def __init__(self, input_dim, latent_dim=4):
+            super(AutoencoderKrzywych, self).__init__()
+            # Encoder - kompresuje surowy wykres do 4 kluczowych cech
+            self.encoder = nn.Sequential(
+                nn.Linear(input_dim, 32),
+                nn.ReLU(),
+                nn.Linear(32, latent_dim)
+            )
+            # Decoder - próbuje odtworzyć oryginalny wykres z tych 4 cech
+            self.decoder = nn.Sequential(
+                nn.Linear(latent_dim, 32),
+                nn.ReLU(),
+                nn.Linear(32, input_dim)
+            )
+        def forward(self, x):
+            latent = self.encoder(x)
+            reconstructed = self.decoder(latent)
+            return latent, reconstructed
+
+# Konfiguracja strony
+st.set_page_config(page_title="Analizator Krzywych Pro", layout="wide")
+
+st.title("📊 Interaktywny Analizator Krzywych AI Pro")
+st.write("Wgraj plik Excel lub wklej link do Google Sheets. System automatycznie dopasuje metody sztucznej inteligencji.")
 
 # =================================================================
 # INTELIGENTNY DETEKTYW STARTU TABELI
@@ -93,7 +126,7 @@ if df is not None:
         krzywe = df.iloc[:, 1:]
         nazwy_krzywych = krzywe.columns.tolist()
         
-        # Dynamiczne budowanie listy metod na podstawie dostępności bibliotek
+        # Dynamiczne budowanie listy metod
         lista_metod = [
             "K-means", 
             "Hierarchiczna (Euklidesowa)", 
@@ -103,6 +136,8 @@ if df is not None:
         ]
         if tslearn_dostepne:
             lista_metod.append("K-Shape (Kształt fali)")
+        if pytorch_dostepne:
+            lista_metod.append("DEC (Głębokie Uczenie - Sieć Neuronowa)")
         
         # Wybór parametrów - 3 kolumny
         col_param1, col_param2, col_param3 = st.columns(3)
@@ -110,29 +145,31 @@ if df is not None:
             metoda = st.selectbox("Wybierz metodę główną:", lista_metod)
         
         with col_param2:
-            # Optymalizacje matematyczne wyłączamy dla K-Shape, bo ono ma własny system korelacji
-            if "K-Shape" not in metoda:
+            # Metody zaawansowane (K-Shape i DEC) mają wbudowane specyficzne przygotowanie danych
+            if "K-Shape" not in metoda and "DEC" not in metoda:
                 optymalizacja = st.selectbox(
                     "Wybierz wstępne przygotowanie danych:", 
                     ["Standardowa", "Analiza trendu", "FeatureExtraction", "MinMaxScaler", "Filtrowanie szumów"]
                 )
             else:
                 optymalizacja = "Standardowa"
-                st.selectbox("Optymalizacja wbudowana w algorytm", ["Korelacja kształtu"], disabled=True)
+                st.selectbox("Optymalizacja wbudowana w algorytm", ["Wbudowana (Auto-Embedding)"], disabled=True)
                 
         with col_param3:
-            # Dostosowanie suwaka do specyfiki algorytmu
             if "HDBSCAN" in metoda:
                 min_wielkosc = st.slider("Minimalna wielkość grupy (Min Cluster Size):", min_value=2, max_value=10, value=3)
             else:
                 liczba_grup = st.slider("Wybierz oczekiwaną liczbę grup (K):", min_value=2, max_value=10, value=4)
             
-        # Informacja o K-Shape, jeśli biblioteka nie jest jeszcze wgrana
-        if not tslearn_dostepne:
-            st.info("💡 Chcesz odblokować metodę **K-Shape (Kształt fali)**? Dopisz `tslearn` do swojego pliku `requirements.txt` na GitHubie!")
+        # Alerty o brakujących bibliotekach
+        if not tslearn_dostepne or not pytorch_dostepne:
+            brakujace = []
+            if not tslearn_dostepne: brakujace.append("`tslearn` (dla K-Shape)")
+            if not pytorch_dostepne: brakujace.append("`torch` (dla DEC)")
+            st.info(f"💡 Aby odblokować wszystkie metody AI, dopisz do swojego `requirements.txt`: {', '.join(brakujace)}")
 
         # =================================================================
-        # PRZETWARZANIE DANYCH
+        # PRZETWARZANIE DANYCH WEJŚCIOWYCH
         # =================================================================
         krzywe_T = krzywe.T
         
@@ -160,7 +197,7 @@ if df is not None:
             dane_do_algorytmu = scaler.fit_transform(krzywe_T)
             
         # =================================================================
-        # REALIZACJA NOWOCZESNYCH METOD KLASTERYZACJI
+        # KLASTERYZACJA ALGORYTMAMI
         # =================================================================
         if metoda == "K-means":
             model = KMeans(n_clusters=liczba_grup, random_state=42, n_init=10)
@@ -173,7 +210,6 @@ if df is not None:
         elif "HDBSCAN" in metoda:
             model = HDBSCAN(min_cluster_size=min_wielkosc, min_samples=1)
             klastry_raw = model.fit_predict(dane_do_algorytmu)
-            # HDBSCAN zwraca -1 dla szumu/anomalii. Mapujemy: -1 zostaje jako 0 (Szum), reszta dostaje +1
             numery_grup = [n + 1 if n >= 0 else 0 for n in klastry_raw]
             
         elif "GMM" in metoda:
@@ -189,13 +225,44 @@ if df is not None:
             model = KShape(n_clusters=liczba_grup, random_state=42)
             numery_grup = model.fit_predict(dataset) + 1
             
-        # Przygotowanie tabeli wynikowej
+        elif "DEC" in metoda:
+            # PROCES DEEP EMBEDDED CLUSTERING (TRENING W LOCIE)
+            with st.spinner("🧠 Trwa trening sieci neuronowej (Autoenkodera)... Proszę czekać."):
+                # Zamiana danych na sensory PyTorch
+                X_tensor = torch.FloatTensor(dane_do_algorytmu)
+                
+                # Inicjalizacja sieci
+                input_dim = dane_do_algorytmu.shape[1]
+                net = AutoencoderKrzywych(input_dim=input_dim, latent_dim=4)
+                criterion = nn.MSELoss()
+                optimizer = optim.Adam(net.parameters(), lr=0.01)
+                
+                # Szybki trening sieci (150 epok - ultra szybkie dla małego zestawu)
+                net.train()
+                for epoch in range(150):
+                    optimizer.zero_grad()
+                    latent, reconstructed = net(X_tensor)
+                    loss = criterion(reconstructed, X_tensor)
+                    loss.backward()
+                    optimizer.step()
+                
+                # Wyciągnięcie skompresowanych cech (Latent Space) z sieci
+                net.eval()
+                with torch.no_grad():
+                    kodowanie_cech, _ = net(X_tensor)
+                    dane_skalowane_przez_siec = kodowanie_cech.numpy()
+                
+                # Klasteryzacja K-means na skompresowanych cechach z sieci neuronowej
+                model_dec = KMeans(n_clusters=liczba_grup, random_state=42, n_init=10)
+                numery_grup = model_dec.fit_predict(dane_skalowane_przez_siec) + 1
+            
+        # Tabela wynikowa
         wyniki = pd.DataFrame({
             'Krzywa': nazwy_krzywych,
             'Numer Grupy': numery_grup
         }).sort_values(by='Numer Grupy')
         
-        # Metoda Łokcia (Tylko dla klasycznego K-means)
+        # Metoda Łokcia
         if metoda == "K-means":
             with st.expander("🔍 Podpowiedź matematyczna (Metoda Łokcia)"):
                 inercja = []
@@ -214,7 +281,7 @@ if df is not None:
                 st.pyplot(fig_elbow)
                 plt.close(fig_elbow)
 
-        # Prezentacja wyników graficznych i tabeli
+        # Prezentacja graficzna
         col_wykres, col_tabela = st.columns([3, 1])
         
         with col_wykres:
@@ -223,20 +290,17 @@ if df is not None:
             cmap = plt.get_cmap('tab10')
             
             if "Hierarchiczna" in metoda:
-                # Dla hierarchicznej rysujemy tradycyjne drzewo powiązań
                 powiazania_tree = linkage(dane_do_algorytmu, method='ward')
                 dendrogram(powiazania_tree, labels=nazwy_krzywych, leaf_rotation=90, leaf_font_size=9, ax=ax)
                 ax.set_title("Drzewo Podobieństwa (Dendrogram)")
             else:
-                # Dla wszystkich pozostałych metod rysujemy pogrupowane krzywe pomiarowe
                 for i, kolumna in enumerate(krzywe.columns):
                     g = numery_grup[i]
                     if g == 0:
-                        # Szum/Anomalie w HDBSCAN rysujemy jako przerywane, szare linie
                         ax.plot(x, krzywe[kolumna], color='gray', linestyle=':', alpha=0.4, linewidth=1)
                     else:
                         ax.plot(x, krzywe[kolumna], color=cmap((g - 1) % 10), alpha=0.6, linewidth=1)
-                ax.set_title(f"Metoda: {metoda} | Przygotowanie: {optymalizacja}")
+                ax.set_title(f"Metoda: {metoda}")
                 ax.grid(True, linestyle='--', alpha=0.5)
                 
             st.pyplot(fig)
@@ -258,7 +322,7 @@ if df is not None:
                 use_container_width=True
             )
 
-        # Raport tekstowy na dole strony
+        # Raport tekstowy
         st.write("---")
         st.subheader("📝 Podsumowanie tekstowe grup")
         
@@ -269,7 +333,7 @@ if df is not None:
             lista_str = ", ".join(krzywe_w_grupie)
             
             if g == 0:
-                st.markdown(f"🔴 **Szum / Anomalie pomiarowe** ({len(krzywe_w_grupie)} krzywych) - odrzucone przez algorytm jako niepasujące:")
+                st.markdown(f"🔴 **Szum / Anomalie pomiarowe** ({len(krzywe_w_grupie)} krzywych):")
             else:
                 st.markdown(f"🟢 **Grupa {g}** ({len(krzywe_w_grupie)} krzywych):")
             st.code(lista_str, language="")
