@@ -84,13 +84,12 @@ if df is not None:
         krzywe = df.iloc[:, 1:]
         nazwy_krzywych = krzywe.columns.tolist()
         
-        # Wybór parametrów - ułożone w 3 kolumnach (na telefonie przejdą w pion)
+        # Wybór parametrów
         col_param1, col_param2, col_param3 = st.columns(3)
         with col_param1:
-            metoda = st.selectbox("Wybierz metodę główną:", ["K-means", "Hierarchiczna (Euklidesowa)"])
+            metoda = st.selectbox("Wybierz metoda główną:", ["K-means", "Hierarchiczna (Euklidesowa)"])
         
         with col_param2:
-            # Wybierak optymalizacji aktywuje się tylko dla K-means
             if metoda == "K-means":
                 optymalizacja = st.selectbox(
                     "Wybierz metodę optymalizacji:", 
@@ -101,49 +100,35 @@ if df is not None:
                 st.selectbox("Optymalizacja niedostępna dla tej metody", ["Brak"], disabled=True)
                 
         with col_param3:
-            liczba_grup = st.slider("Wybierz liczbę grup (K):", min_value=2, max_value=10, value=4)
+            liczba_grup = st.sidebar.slider("Wybierz liczbę grup (K):", min_value=2, max_value=10, value=4) if 'dummy' in st.session_state else st.slider("Wybierz liczbę grup (K):", min_value=2, max_value=10, value=4)
             
-        # =================================================================
-        # PRZETWARZANIE DANYCH ZGODNIE Z WYBRANĄ OPTYMALIZACJĄ
-        # =================================================================
+        # Przetwarzanie danych pod kątem wybranej optymalizacji
         krzywe_T = krzywe.T
         
         if optymalizacja == "Analiza trendu":
-            # Pierwsza pochodna (różnice punkt po punkcie)
             krzywe_opt = krzywe.diff(axis=0).fillna(0).T
             scaler = StandardScaler()
             dane_do_algorytmu = scaler.fit_transform(krzywe_opt)
-            
         elif optymalizacja == "FeatureExtraction":
-            # Wyciąganie cech geometrycznych
             cechy = pd.DataFrame(index=nazwy_krzywych)
             cechy['Max'] = krzywe.max().values
             cechy['Poz_Max'] = krzywe.idxmax().apply(lambda idx: x.iloc[idx]).values
             cechy['Srednia'] = krzywe.mean().values
             cechy['Std'] = krzywe.std().values
-            
             scaler = StandardScaler()
             dane_do_algorytmu = scaler.fit_transform(cechy)
-            
         elif optymalizacja == "MinMaxScaler":
-            # Skalowanie w przedziale 0-1 dla każdego wykresu osobno
             scaler = MinMaxScaler()
             dane_do_algorytmu = scaler.fit_transform(krzywe_T)
-            
         elif optymalizacja == "Filtrowanie szumów":
-            # Średnia krocząca (okno 5 punktów)
             krzywe_smooth = krzywe.rolling(window=5, center=True, min_periods=1).mean()
             scaler = StandardScaler()
             dane_do_algorytmu = scaler.fit_transform(krzywe_smooth.T)
-            
         else:
-            # Standardowe podejście (StandardScaler)
             scaler = StandardScaler()
             dane_do_algorytmu = scaler.fit_transform(krzywe_T)
             
-        # =================================================================
-        # OBLICZENIA I KLASTERYZACJA
-        # =================================================================
+        # Obliczenia
         if metoda == "K-means":
             model = KMeans(n_clusters=liczba_grup, random_state=42, n_init=10)
             numery_grup = model.fit_predict(dane_do_algorytmu) + 1
@@ -156,7 +141,7 @@ if df is not None:
             'Numer Grupy': numery_grup
         }).sort_values(by='Numer Grupy')
         
-        # Metoda Łokcia (tylko dla K-means)
+        # Metoda Łokcia
         if metoda == "K-means":
             with st.expander("🔍 Podpowiedź matematyczna (Metoda Łokcia)"):
                 inercja = []
@@ -175,7 +160,7 @@ if df is not None:
                 st.pyplot(fig_elbow)
                 plt.close(fig_elbow)
 
-        # Prezentacja wyników
+        # Prezentacja wyników graficznych i tabeli
         col_wykres, col_tabela = st.columns([3, 1])
         
         with col_wykres:
@@ -184,7 +169,6 @@ if df is not None:
             
             if metoda == "K-means":
                 cmap = plt.get_cmap('tab10')
-                # Zawsze rysujemy oryginalne dane, by widzieć fizyczny efekt dopasowania
                 for i, kolumna in enumerate(krzywe.columns):
                     g = numery_grup[i] - 1
                     ax.plot(x, krzywe[kolumna], color=cmap(g), alpha=0.6, linewidth=1)
@@ -212,6 +196,26 @@ if df is not None:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True
             )
+
+        # =================================================================
+        # NOWOŚĆ: RAPORT TEKSTOWY (OTWARTY TEKST) NA SAMYM DOLE
+        # =================================================================
+        st.write("---")
+        st.subheader("📝 Podsumowanie tekstowe grup")
+        
+        unikalne_grupy = sorted(wyniki['Numer Grupy'].unique())
+        st.write(f"Algorytm pomyślnie wyodrębnił **{len(unikalne_grupy)}** klastrów pomiarowych.")
+        
+        # Generujemy czysty tekst dla każdej grupy
+        for g in unikalne_grupy:
+            # Wyciągamy listy krzywych należących do danej grupy
+            krzywe_w_grupie = wyniki[wyniki['Numer Grupy'] == g]['Krzywa'].tolist()
+            lista_str = ", ".join(krzywe_w_grupie)
+            
+            # Wypisujemy ładny, czytelny blok tekstu
+            st.markdown(f"🟢 **Grupa {g}** ({len(krzywe_w_grupie)} krzywych):")
+            st.code(lista_str, language="") # Użycie st.code ułatwia kopiowanie jednym kliknięciem
+            
     except Exception as ogolny_blad:
         st.error(f"Problem z przetworzeniem danych: {ogolny_blad}")
 else:
