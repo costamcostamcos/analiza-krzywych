@@ -6,18 +6,60 @@ from sklearn.cluster import KMeans
 from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
 import io
 
-# Konfiguracja strony - layout dopasowujący się do urządzeń
+# Konfiguracja strony
 st.set_page_config(page_title="Analizator Krzywych", layout="wide")
 
 st.title("📊 Interaktywny Analizator Krzywych")
-st.write("Wgraj plik Excel lub wklej link do Google Sheets, aby pogrupować wykresy.")
+st.write("Wgraj plik Excel lub wklej link do Google Sheets. Aplikacja automatycznie odnajdzie start tabeli.")
 
 # =================================================================
-# NOWA SEKCJA KONFIGURACJI (PROSTA DLA TELEFONÓW I KOMPUTERÓW)
+# INTELIGENTNY DETEKTYW STARTU TABELI
+# =================================================================
+def inteligentne_pobranie_tabeli(df_raw):
+    """
+    Funkcja skanuje surowy arkusz i odrzuca puste wiersze/tytuły na górze,
+    szukając prawdziwego początku tabeli z danymi.
+    """
+    # 1. Usuwamy kolumny i wiersze na marginesach, które są całkowicie puste
+    df_raw = df_raw.dropna(how='all', axis=0).dropna(how='all', axis=1)
+    df_raw = df_raw.reset_index(drop=True)
+    
+    indeks_startu = 0
+    
+    # 2. Szukamy wiersza nagłówkowego
+    for idx, row in df_raw.iterrows():
+        # Nagłówek musi mieć więcej niż jedną wypełnioną komórkę
+        if row.notna().sum() > 1:
+            # Sprawdzamy, czy wiersz niżej zawiera liczby (nasze dane)
+            if idx + 1 < len(df_raw):
+                nastepny_wiersz = df_raw.iloc[idx + 1]
+                # Próbujemy zamienić wartości na liczby i liczymy sukcesy
+                ile_liczb = pd.to_numeric(nastepny_wiersz, errors='coerce').notna().sum()
+                if ile_liczb > 1:
+                    indeks_startu = idx
+                    break
+                    
+    # 3. Ocinamy metadane z góry i ustawiamy właściwy nagłówek
+    naglowki = df_raw.iloc[indeks_startu]
+    df_czysty = df_raw.iloc[indeks_startu + 1:].copy()
+    df_czysty.columns = naglowki
+    df_czysty = df_czysty.reset_index(drop=True)
+    
+    # 4. Czyszczenie końcowe
+    # Konwertujemy wszystkie dane na liczby (tekstowe błędy zamienią się w NaN)
+    df_czysty = df_czysty.apply(pd.to_numeric, errors='coerce')
+    # Usuwamy kolumny, które stały się całkowicie puste
+    df_czysty = df_czysty.dropna(how='all', axis=1)
+    # Usuwamy wiersze, które nie mają wartości w pierwszej kolumnie (X)
+    df_czysty = df_czysty.dropna(subset=[df_czysty.columns[0]])
+    
+    return df_czysty
+
+# =================================================================
+# SEKCJA INTERFEJSU
 # =================================================================
 st.write("### ⚙️ Ustawienia analizy")
 
-# Wybór źródła danych na środku strony
 typ_zrodla = st.radio(
     "Wybierz źródło danych:", 
     ["Plik Excel (.xlsx)", "Link do Google Sheets"], 
@@ -29,7 +71,9 @@ df = None
 if typ_zrodla == "Plik Excel (.xlsx)":
     uploaded_file = st.file_uploader("Wgraj plik Excel", type=["xlsx"])
     if uploaded_file is not None:
-        df = pd.read_excel(uploaded_file)
+        # header=None informuje Pythona, żeby wczytał plik "na surowo" od komórki A1
+        df_raw = pd.read_excel(uploaded_file, header=None)
+        df = inteligentne_pobranie_tabeli(df_raw)
 else:
     link_sheets = st.text_input(
         "Wklej link do Google Sheets:", 
@@ -39,29 +83,29 @@ else:
     
     if link_sheets:
         try:
-            # Trik konwertujący zwykły link Google Sheets na bezpośredni eksport do Excela
             if "docs.google.com/spreadsheets" in link_sheets:
                 bazowy_url = link_sheets.split("/edit")[0]
                 url_eksportu = f"{bazowy_url}/export?format=xlsx"
-                df = pd.read_excel(url_eksportu)
+                df_raw = pd.read_excel(url_eksportu, header=None)
+                df = inteligentne_pobranie_tabeli(df_raw)
             else:
                 st.error("To nie wygląda na poprawny link do Google Sheets.")
         except Exception as e:
-            st.error("Nie udało się pobrać danych. Sprawdź, czy arkusz na pewno jest udostępniony dla każdego z linkiem.")
+            st.error("Nie udało się pobrać danych. Sprawdź udostępnienie linku.")
 
-# Jeśli dane zostały poprawnie wczytane z dowolnego źródła
+# Jeśli dane zostały poprawnie znalezione i przetworzone
 if df is not None:
     try:
         x = df.iloc[:, 0]
         krzywe = df.iloc[:, 1:]
         nazwy_krzywych = krzywe.columns.tolist()
         
-        # Przygotowanie danych
+        # Skalowanie danych
         krzywe_T = krzywe.T
         scaler = StandardScaler()
         krzywe_skalowane = scaler.fit_transform(krzywe_T)
         
-        # Ustawienia metody i suwaka w dwóch kolumnach (na telefonie będą jedna pod drugą)
+        # Wybór parametrów
         col_param1, col_param2 = st.columns(2)
         with col_param1:
             metoda = st.selectbox("Wybierz metodę grupowania:", ["K-means", "Hierarchiczna (Euklidesowa)"])
@@ -81,7 +125,7 @@ if df is not None:
             'Numer Grupy': numery_grup
         }).sort_values(by='Numer Grupy')
         
-        # Metoda Łokcia ukryta w pasku
+        # Metoda Łokcia
         if metoda == "K-means":
             with st.expander("🔍 Podpowiedź matematyczna (Metoda Łokcia)"):
                 inercja = []
@@ -100,7 +144,7 @@ if df is not None:
                 st.pyplot(fig_elbow)
                 plt.close(fig_elbow)
 
-        # Prezentacja wyników - na dużym ekranie obok siebie, na telefonie w pionie
+        # Prezentacja wyników
         col_wykres, col_tabela = st.columns([3, 1])
         
         with col_wykres:
@@ -125,7 +169,6 @@ if df is not None:
             st.subheader("📋 Grupy")
             st.dataframe(wyniki, use_container_width=True, hide_index=True, height=300)
             
-            # Przygotowanie pliku Excel do pobrania
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 wyniki.to_excel(writer, index=False)
@@ -138,7 +181,7 @@ if df is not None:
                 use_container_width=True
             )
     except Exception as ogolny_blad:
-        st.error(f"Wykryto problem ze strukturą danych w pliku: {ogolny_blad}")
-        st.info("Upewnij się, że pierwsza kolumna to argument (np. czas/X), a kolejne kolumny to Twoje krzywe.")
+        st.error(f"Problem z przetworzeniem danych: {ogolny_blad}")
+        st.info("Upewnij się, że Twoja tabela zawiera nagłówki kolumn, a bezpośrednio pod nimi znajdują się już tylko liczby.")
 else:
-    st.info("💡 Aby rozpocząć, wgraj plik z dysku lub wklej link do skonfigurowanego arkusza Google Sheets powyżej.")
+    st.info("💡 Aby rozpocząć, wgraj plik z dysku lub wklej link do Google Sheets powyżej.")
