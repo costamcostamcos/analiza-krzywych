@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.cluster import KMeans
 from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
 import io
@@ -16,41 +16,26 @@ st.write("Wgraj plik Excel lub wklej link do Google Sheets. Aplikacja automatycz
 # INTELIGENTNY DETEKTYW STARTU TABELI
 # =================================================================
 def inteligentne_pobranie_tabeli(df_raw):
-    """
-    Funkcja skanuje surowy arkusz i odrzuca puste wiersze/tytuły na górze,
-    szukając prawdziwego początku tabeli z danymi.
-    """
-    # 1. Usuwamy kolumny i wiersze na marginesach, które są całkowicie puste
     df_raw = df_raw.dropna(how='all', axis=0).dropna(how='all', axis=1)
     df_raw = df_raw.reset_index(drop=True)
     
     indeks_startu = 0
-    
-    # 2. Szukamy wiersza nagłówkowego
     for idx, row in df_raw.iterrows():
-        # Nagłówek musi mieć więcej niż jedną wypełnioną komórkę
         if row.notna().sum() > 1:
-            # Sprawdzamy, czy wiersz niżej zawiera liczby (nasze dane)
             if idx + 1 < len(df_raw):
                 nastepny_wiersz = df_raw.iloc[idx + 1]
-                # Próbujemy zamienić wartości na liczby i liczymy sukcesy
                 ile_liczb = pd.to_numeric(nastepny_wiersz, errors='coerce').notna().sum()
                 if ile_liczb > 1:
                     indeks_startu = idx
                     break
                     
-    # 3. Ocinamy metadane z góry i ustawiamy właściwy nagłówek
     naglowki = df_raw.iloc[indeks_startu]
     df_czysty = df_raw.iloc[indeks_startu + 1:].copy()
     df_czysty.columns = naglowki
     df_czysty = df_czysty.reset_index(drop=True)
     
-    # 4. Czyszczenie końcowe
-    # Konwertujemy wszystkie dane na liczby (tekstowe błędy zamienią się w NaN)
     df_czysty = df_czysty.apply(pd.to_numeric, errors='coerce')
-    # Usuwamy kolumny, które stały się całkowicie puste
     df_czysty = df_czysty.dropna(how='all', axis=1)
-    # Usuwamy wiersze, które nie mają wartości w pierwszej kolumnie (X)
     df_czysty = df_czysty.dropna(subset=[df_czysty.columns[0]])
     
     return df_czysty
@@ -71,7 +56,6 @@ df = None
 if typ_zrodla == "Plik Excel (.xlsx)":
     uploaded_file = st.file_uploader("Wgraj plik Excel", type=["xlsx"])
     if uploaded_file is not None:
-        # header=None informuje Pythona, żeby wczytał plik "na surowo" od komórki A1
         df_raw = pd.read_excel(uploaded_file, header=None)
         df = inteligentne_pobranie_tabeli(df_raw)
 else:
@@ -100,24 +84,71 @@ if df is not None:
         krzywe = df.iloc[:, 1:]
         nazwy_krzywych = krzywe.columns.tolist()
         
-        # Skalowanie danych
-        krzywe_T = krzywe.T
-        scaler = StandardScaler()
-        krzywe_skalowane = scaler.fit_transform(krzywe_T)
-        
-        # Wybór parametrów
-        col_param1, col_param2 = st.columns(2)
+        # Wybór parametrów - ułożone w 3 kolumnach (na telefonie przejdą w pion)
+        col_param1, col_param2, col_param3 = st.columns(3)
         with col_param1:
-            metoda = st.selectbox("Wybierz metodę grupowania:", ["K-means", "Hierarchiczna (Euklidesowa)"])
+            metoda = st.selectbox("Wybierz metodę główną:", ["K-means", "Hierarchiczna (Euklidesowa)"])
+        
         with col_param2:
+            # Wybierak optymalizacji aktywuje się tylko dla K-means
+            if metoda == "K-means":
+                optymalizacja = st.selectbox(
+                    "Wybierz metodę optymalizacji:", 
+                    ["Standardowa", "Analiza trendu", "FeatureExtraction", "MinMaxScaler", "Filtrowanie szumów"]
+                )
+            else:
+                optymalizacja = "Standardowa"
+                st.selectbox("Optymalizacja niedostępna dla tej metody", ["Brak"], disabled=True)
+                
+        with col_param3:
             liczba_grup = st.slider("Wybierz liczbę grup (K):", min_value=2, max_value=10, value=4)
             
-        # Obliczenia
+        # =================================================================
+        # PRZETWARZANIE DANYCH ZGODNIE Z WYBRANĄ OPTYMALIZACJĄ
+        # =================================================================
+        krzywe_T = krzywe.T
+        
+        if optymalizacja == "Analiza trendu":
+            # Pierwsza pochodna (różnice punkt po punkcie)
+            krzywe_opt = krzywe.diff(axis=0).fillna(0).T
+            scaler = StandardScaler()
+            dane_do_algorytmu = scaler.fit_transform(krzywe_opt)
+            
+        elif optymalizacja == "FeatureExtraction":
+            # Wyciąganie cech geometrycznych
+            cechy = pd.DataFrame(index=nazwy_krzywych)
+            cechy['Max'] = krzywe.max().values
+            cechy['Poz_Max'] = krzywe.idxmax().apply(lambda idx: x.iloc[idx]).values
+            cechy['Srednia'] = krzywe.mean().values
+            cechy['Std'] = krzywe.std().values
+            
+            scaler = StandardScaler()
+            dane_do_algorytmu = scaler.fit_transform(cechy)
+            
+        elif optymalizacja == "MinMaxScaler":
+            # Skalowanie w przedziale 0-1 dla każdego wykresu osobno
+            scaler = MinMaxScaler()
+            dane_do_algorytmu = scaler.fit_transform(krzywe_T)
+            
+        elif optymalizacja == "Filtrowanie szumów":
+            # Średnia krocząca (okno 5 punktów)
+            krzywe_smooth = krzywe.rolling(window=5, center=True, min_periods=1).mean()
+            scaler = StandardScaler()
+            dane_do_algorytmu = scaler.fit_transform(krzywe_smooth.T)
+            
+        else:
+            # Standardowe podejście (StandardScaler)
+            scaler = StandardScaler()
+            dane_do_algorytmu = scaler.fit_transform(krzywe_T)
+            
+        # =================================================================
+        # OBLICZENIA I KLASTERYZACJA
+        # =================================================================
         if metoda == "K-means":
             model = KMeans(n_clusters=liczba_grup, random_state=42, n_init=10)
-            numery_grup = model.fit_predict(krzywe_skalowane) + 1
+            numery_grup = model.fit_predict(dane_do_algorytmu) + 1
         else:
-            powiazania = linkage(krzywe_skalowane, method='ward')
+            powiazania = linkage(dane_do_algorytmu, method='ward')
             numery_grup = fcluster(powiazania, t=liczba_grup, criterion='maxclust')
             
         wyniki = pd.DataFrame({
@@ -125,14 +156,14 @@ if df is not None:
             'Numer Grupy': numery_grup
         }).sort_values(by='Numer Grupy')
         
-        # Metoda Łokcia
+        # Metoda Łokcia (tylko dla K-means)
         if metoda == "K-means":
             with st.expander("🔍 Podpowiedź matematyczna (Metoda Łokcia)"):
                 inercja = []
                 zakres_k = range(2, 11)
                 for k in zakres_k:
                     km = KMeans(n_clusters=k, random_state=42, n_init=5)
-                    km.fit(krzywe_skalowane)
+                    km.fit(dane_do_algorytmu)
                     inercja.append(km.inertia_)
                 
                 fig_elbow, ax_elbow = plt.subplots(figsize=(10, 3))
@@ -153,10 +184,11 @@ if df is not None:
             
             if metoda == "K-means":
                 cmap = plt.get_cmap('tab10')
+                # Zawsze rysujemy oryginalne dane, by widzieć fizyczny efekt dopasowania
                 for i, kolumna in enumerate(krzywe.columns):
                     g = numery_grup[i] - 1
                     ax.plot(x, krzywe[kolumna], color=cmap(g), alpha=0.6, linewidth=1)
-                ax.set_title(f"Podział na {liczba_grup} grupy")
+                ax.set_title(f"Podział na {liczba_grup} grupy ({optymalizacja})")
                 ax.grid(True, linestyle='--', alpha=0.5)
             else:
                 dendrogram(powiazania, labels=nazwy_krzywych, leaf_rotation=90, leaf_font_size=9, ax=ax)
@@ -182,6 +214,5 @@ if df is not None:
             )
     except Exception as ogolny_blad:
         st.error(f"Problem z przetworzeniem danych: {ogolny_blad}")
-        st.info("Upewnij się, że Twoja tabela zawiera nagłówki kolumn, a bezpośrednio pod nimi znajdują się już tylko liczby.")
 else:
     st.info("💡 Aby rozpocząć, wgraj plik z dysku lub wklej link do Google Sheets powyżej.")
