@@ -4,8 +4,10 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.cluster import KMeans, HDBSCAN, SpectralClustering
 from sklearn.mixture import GaussianMixture
+from sklearn.metrics import silhouette_score
 from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
 import io
+import numpy as np
 
 # Bezpieczny import dla zaawansowanego algorytmu K-Shape
 try:
@@ -149,7 +151,8 @@ if df is not None:
         if pytorch_dostepne:
             lista_metod.append("DEC (Głębokie Uczenie - Sieć Neuronowa)")
             lista_metod.append("ADEC (Adwersarialne Głębokie Uczenie)")
-            lista_metod.append("RDEC (Regularizowane Głębokie Uczenie - Nowość)")
+            lista_metod.append("RDEC (Regularizowane Głębokie Uczenie)")
+            lista_metod.append("ADClust (Automatyczne Głębokie Uczenie - Nowość!)")
         
         # Układ parametrów - 3 kolumny
         col_param1, col_param2, col_param3 = st.columns(3)
@@ -157,7 +160,7 @@ if df is not None:
             metoda = st.selectbox("Wybierz metodę główną:", lista_metod)
         
         with col_param2:
-            if "K-Shape" not in metoda and "DEC" not in metoda and "RDEC" not in metoda:
+            if "K-Shape" not in metoda and "DEC" not in metoda and "RDEC" not in metoda and "ADClust" not in metoda:
                 optymalizacja = st.selectbox(
                     "Wybierz wstępne przygotowanie danych:", 
                     ["Standardowa", "Analiza trendu", "FeatureExtraction", "MinMaxScaler", "Filtrowanie szumów"]
@@ -169,6 +172,8 @@ if df is not None:
         with col_param3:
             if "HDBSCAN" in metoda:
                 min_wielkosc = st.slider("Minimalna wielkość grupy (Min Cluster Size):", min_value=2, max_value=10, value=3)
+            elif "ADClust" in metoda:
+                st.slider("Liczba grup dobierana automatycznie przez AI", min_value=0, max_value=0, value=0, disabled=True)
             else:
                 liczba_grup = st.slider("Wybierz oczekiwaną liczbę grup (K):", min_value=2, max_value=10, value=4)
 
@@ -313,30 +318,20 @@ if df is not None:
                 numery_grup = model_adec.fit_predict(dane_oczyszczone_adec) + 1
 
         elif "RDEC" in metoda:
-            # PROCES REGULARIZOWANEGO GŁĘBOKIEGO UCZENIA (RDEC)
             with st.spinner("🛡️ Trwa trening sieci z barierą regularyzacji (RDEC)..."):
                 X_tensor = torch.FloatTensor(dane_do_algorytmu)
                 input_dim = dane_do_algorytmu.shape[1]
                 net = AutoencoderKrzywych(input_dim=input_dim, latent_dim=4)
                 criterion = nn.MSELoss()
-                
-                # Użycie weight_decay=1e-4 włącza automatyczną regularyzację L2 (karę za skomplikowanie wag sieci)
                 optimizer = optim.Adam(net.parameters(), lr=0.01, weight_decay=1e-4)
                 
                 net.train()
                 for epoch in range(150):
                     optimizer.zero_grad()
                     latent, reconstructed = net(X_tensor)
-                    
-                    # Podstawowa strata rekonstrukcji kształtu
                     loss_recon = criterion(reconstructed, X_tensor)
-                    
-                    # Dodatkowa kara za "rozrzut" w przestrzeni ukrytej (zmusza klastry do zwartości geometrycznej)
                     penalty_latent = torch.mean(torch.norm(latent, p=2, dim=1))
-                    
-                    # Całkowita strata z barierą regularyzacji
                     loss = loss_recon + 0.01 * penalty_latent
-                    
                     loss.backward()
                     optimizer.step()
                 
@@ -345,9 +340,49 @@ if df is not None:
                     kodowanie_rdec, _ = net(X_tensor)
                     dane_stabilne_rdec = kodowanie_rdec.numpy()
                 
-                # Klasteryzacja na super-stabilnych cechach
                 model_rdec = KMeans(n_clusters=liczba_grup, random_state=42, n_init=10)
                 numery_grup = model_rdec.fit_predict(dane_stabilne_rdec) + 1
+
+        elif "ADClust" in metoda:
+            # PROCES AUTOMATYCZNEGO GŁĘBOKIEGO KLASTEROWANIA (ADClust)
+            with st.spinner("🤖 Trwa inteligentny trening ADClust. Sieć neuronowa sama ustala liczbę grup..."):
+                X_tensor = torch.FloatTensor(dane_do_algorytmu)
+                input_dim = dane_do_algorytmu.shape[1]
+                net = AutoencoderKrzywych(input_dim=input_dim, latent_dim=4)
+                criterion = nn.MSELoss()
+                optimizer = optim.Adam(net.parameters(), lr=0.01)
+                
+                # 1. Wstępny trening enkodera, by ułożył dane
+                net.train()
+                for epoch in range(120):
+                    optimizer.zero_grad()
+                    latent, reconstructed = net(X_tensor)
+                    loss = criterion(reconstructed, X_tensor)
+                    loss.backward()
+                    optimizer.step()
+                
+                net.eval()
+                with torch.no_grad():
+                    latent_features, _ = net(X_tensor)
+                    dane_ukryte = latent_features.numpy()
+                
+                # 2. Automatyczne poszukiwanie optymalnego K za pomocą metryki Silhouette wewnątrz sieci
+                najlepsze_k = 2
+                najwyzszy_wynik = -1
+                
+                # Skanujemy potencjalne podziały od 2 do 8 grup
+                for k_test in range(2, 9):
+                    km_test = KMeans(n_clusters=k_test, random_state=42, n_init=5)
+                    etykiety_test = km_test.fit_predict(dane_ukryte)
+                    score = silhouette_score(dane_ukryte, etykiety_test)
+                    if score > najwyzszy_wynik:
+                        najwyzszy_wynik = score
+                        najlepsze_k = k_test
+                
+                # 3. Finalny podział na optymalnej liczbie grup wyznaczonej przez AI
+                model_adclust = KMeans(n_clusters=najlepsze_k, random_state=42, n_init=10)
+                numery_grup = model_adclust.fit_predict(dane_ukryte) + 1
+                st.success(f"✨ Sieć ADClust automatycznie ustaliła, że optymalna liczba grup to: **{najlepsze_k}**")
 
         # Przygotowanie tabeli wynikowej
         wyniki = pd.DataFrame({
@@ -355,7 +390,7 @@ if df is not None:
             'Numer Grupy': numery_grup
         }).sort_values(by='Numer Grupy')
         
-        # Sekcja: METODA ŁOKCIA (Dla K-means)
+        # Sekcja: METOTA ŁOKCIA (Tylko dla K-means)
         if metoda == "K-means":
             with st.expander("🔍 Podpowiedź matematyczna (Metoda Łokcia)"):
                 inercja = []
@@ -421,7 +456,7 @@ if df is not None:
         unikalne_grupy = sorted(wyniki['Numer Grupy'].unique())
         
         for g in unikalne_grupy:
-            krzywe_w_grupie =wyniki[wyniki['Numer Grupy'] == g]['Krzywa'].tolist()
+            krzywe_w_grupie = wyniki[wyniki['Numer Grupy'] == g]['Krzywa'].tolist()
             lista_str = ", ".join(krzywe_w_grupie)
             
             if g == 0:
