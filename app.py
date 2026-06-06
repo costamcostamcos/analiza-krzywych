@@ -28,6 +28,24 @@ except ImportError:
     pytorch_dostepne = False
 
 # =================================================================
+# SŁOWNIK INTELIGENTNYCH OPISÓW METOD (DYMKI I PODPOWIEDZI)
+# =================================================================
+OPISY_METOD = {
+    "K-means": "Klasyczny algorytm geometryczny. Szuka środków ciężkości grup. Szybki, ale wrażliwy na szum i przesunięcia.",
+    "PSO (Optymalizacja Rojem Cząstek)": "Algorytm heurystyczny oparty na naturze. Rój cząstek-zwiadowców szuka globalnego optimum, omijając lokalne pułapki.",
+    "NMF (Nieujemna Faktoryzacja Macierzy)": "Rozkłada krzywe wyłącznie na czyste składowe dodatnie. Idealna do fizycznych sygnałów i danych laboratoryjnych.",
+    "Hierarchiczna Aglomeracyjna (metoda Warda)": "Buduje stabilne drzewo podobieństwa (dendrogram), minimalizując wariancję i błąd wewnątrz tworzonych klastrów.",
+    "HDBSCAN (Gęstościowa - Auto K)": "Klastrowanie gęstościowe. Samo wykrywa optymalną liczbę grup i automatycznie odrzuca anomalie oraz szum (oznaczane jako Grupa 0).",
+    "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich. Podejście probabilistyczne – wylicza procentową pewność przypisania krzywej do danej grupy.",
+    "Spectral Clustering": "Klastrowanie spektralne oparte na teorii grafów. Projektuje sieć powiązań, świetne do skomplikowanych, zagnieżdżonych struktur.",
+    "K-Shape (Kształt fali)": "Stworzony do serii czasowych. Wykorzystuje korelację wzajemną – rozpoznaje kształt fali nawet przy przesunięciu piku w lewo lub prawo.",
+    "DEC (Głębokie Uczenie - Sieć Neuronowa)": "Sztuczna sieć neuronowa (Autoenkoder) kompresuje krzywe do esencji matematycznej, skutecznie odcinając zaawansowany szum.",
+    "ADEC (Adwersarialne Głębokie Uczenie)": "Pojedynek dwóch sieci (Enkoder vs Dyskryminator). Wymusza idealne, ostre i bardzo zwarte granice między grupami.",
+    "RDEC (Regularizowane Głębokie Uczenie)": "Sieć neuronowa z matematycznym hamulcem (regularyzacją L2). Zapobiega przeuczeniu, idealna do mniejszej liczby krzywych (np. 44).",
+    "ADClust (Automatyczne Głębokie Uczenie)": "Pełna automatyzacja AI. Sieć neuronowa sama skanuje strukturę i bez udziału użytkownika wybiera najlepszą liczbę grup."
+}
+
+# =================================================================
 # IMPLEMENTACJA ALGORYTMU ROJU CZĄSTEK (PSO CLUSTERING)
 # =================================================================
 class PSOClustering:
@@ -203,7 +221,9 @@ if df is not None:
         krzywe = df.iloc[:, 1:]
         nazwy_krzywych = krzywe.columns.tolist()
         
-        # Zaktualizowana lista metod z poprawną nazwą naukową metody Warda
+        # Wstępne przygotowanie listy metod w celu poprawnego mapowania opisów
+        tymczasowa_metoda = st.radio("Wstępny krok mapowania", ["K-means"], label_visibility="collapsed") if 'dummy' in st.session_state else "K-means"
+        
         lista_metod = [
             "K-means", 
             "PSO (Optymalizacja Rojem Cząstek)",
@@ -220,11 +240,22 @@ if df is not None:
             lista_metod.append("ADEC (Adwersarialne Głębokie Uczenie)")
             lista_metod.append("RDEC (Regularizowane Głębokie Uczenie)")
             lista_metod.append("ADClust (Automatyczne Głębokie Uczenie)")
-        
+            
+        # Tworzymy niewidoczny stan sesji, aby pobrać aktualnie wybraną metodę przed renderowaniem nagłówka help
+        if 'wybrana_metoda' not in st.session_state:
+            st.session_state.wybrana_metoda = lista_metod[0]
+
         # Układ parametrów - 3 kolumny
         col_param1, col_param2, col_param3 = st.columns(3)
         with col_param1:
-            metoda = st.selectbox("Wybierz metodę główną:", lista_metod)
+            # NOWOŚĆ: help=OPISY_METOD[...] tworzy automatyczny dymek pomocy obok nagłówka selectboxa!
+            metoda = st.selectbox(
+                "Wybierz metodę główną:", 
+                lista_metod, 
+                index=lista_metod.index(st.session_state.wybrana_metoda),
+                help=OPISY_METOD.get(st.session_state.wybrana_metoda, "")
+            )
+            st.session_state.wybrana_metoda = metoda
         
         with col_param2:
             if "K-Shape" not in metoda and "DEC" not in metoda and "RDEC" not in metoda and "ADClust" not in metoda and "NMF" not in metoda:
@@ -243,6 +274,9 @@ if df is not None:
                 st.text_input("Liczba grup (K):", value="Automatycznie przez AI 🤖", disabled=True)
             else:
                 liczba_grup = st.slider("Wybierz oczekiwaną liczbę grup (K):", min_value=2, max_value=10, value=4)
+
+        # NOWOŚĆ: Wyświetlanie opisu otwartym tekstem tuż pod parametrami (doskonałe na smartfony!)
+        st.markdown(f"💡 **O metodzie:** *{OPISY_METOD.get(metoda, '')}*")
 
         # =================================================================
         # PRZETWARZANIE DANYCH WEJŚCIOWYCH
@@ -297,7 +331,6 @@ if df is not None:
                 numery_grup = np.argmax(W, axis=1) + 1
             
         elif "Hierarchiczna" in metoda:
-            # IMPLEMENTACJA METODY WARDA (Aglomeracyjna z odległością Ward)
             powiazania = linkage(dane_do_algorytmu, method='ward')
             numery_grup = fcluster(powiazania, t=liczba_grup, criterion='maxclust')
             
@@ -470,9 +503,7 @@ if df is not None:
             'Numer Grupy': numery_grup
         }).sort_values(by='Numer Grupy')
         
-        # =================================================================
-        # PANEL PODPOWIEDZI MATEMATYCZNEJ (Zawsze dostępny dla metod z suwakiem)
-        # =================================================================
+        # Sekcja: METODA ŁOKCIA (Zawsze dostępna dla manualnego K)
         if "HDBSCAN" not in metoda and "ADClust" not in metoda:
             with st.expander("🔍 Podpowiedź matematyczna (Metoda Łokcia)"):
                 st.write("Poniższy wykres inercji pomaga dobrać optymalną liczbę grup (K) dla aktualnie przygotowanych danych pomiarowych.")
@@ -501,7 +532,6 @@ if df is not None:
             cmap = plt.get_cmap('tab10')
             
             if "Hierarchiczna" in metoda:
-                # Wyświetlamy tradycyjne, czytelne drzewo podobieństwa dla metody Warda
                 powiazania_tree = linkage(dane_do_algorytmu, method='ward')
                 dendrogram(powiazania_tree, labels=nazwy_krzywych, leaf_rotation=90, leaf_font_size=9, ax=ax)
                 ax.set_title("Drzewo Podobieństwa (Dendrogram)")
