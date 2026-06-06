@@ -15,7 +15,7 @@ try:
 except ImportError:
     tslearn_dostepne = False
 
-# Bezpieczny import dla Głębokiego Uczenia (DEC / PyTorch)
+# Bezpieczny import dla Głębokiego Uczenia (DEC / ADEC / PyTorch)
 try:
     import torch
     import torch.nn as nn
@@ -25,19 +25,18 @@ except ImportError:
     pytorch_dostepne = False
 
 # =================================================================
-# KLASA SIECI NEURONOWEJ (AUTOENKODER DLA METODY DEC)
+# ARCHITEKTURY SIECI NEURONOWYCH (DLA DEC ORAZ ADEC)
 # =================================================================
 if pytorch_dostepne:
+    # 1. Klasyczny Autoenkoder (używany w DEC oraz jako baza do ADEC)
     class AutoencoderKrzywych(nn.Module):
         def __init__(self, input_dim, latent_dim=4):
             super(AutoencoderKrzywych, self).__init__()
-            # Encoder - kompresuje surowy wykres do 4 kluczowych cech
             self.encoder = nn.Sequential(
                 nn.Linear(input_dim, 32),
                 nn.ReLU(),
                 nn.Linear(32, latent_dim)
             )
-            # Decoder - próbuje odtworzyć oryginalny wykres z tych 4 cech
             self.decoder = nn.Sequential(
                 nn.Linear(latent_dim, 32),
                 nn.ReLU(),
@@ -48,8 +47,21 @@ if pytorch_dostepne:
             reconstructed = self.decoder(latent)
             return latent, reconstructed
 
+    # NEW: 2. Dyskryminator dla algorytmu adwersarialnego ADEC
+    class DiscriminatorADEC(nn.Module):
+        def __init__(self, latent_dim=4):
+            super(DiscriminatorADEC, self).__init__()
+            self.model = nn.Sequential(
+                nn.Linear(latent_dim, 16),
+                nn.ReLU(),
+                nn.Linear(16, 1),
+                nn.Sigmoid() # Zwraca prawdopodobieństwo (0 lub 1)
+            )
+        def forward(self, x):
+            return self.model(x)
+
 # Konfiguracja strony
-st.set_page_config(page_title="Analizator Krzywych Pro", layout="wide")
+st.set_page_config(page_title="Analizator Krzywych Pro AI", layout="wide")
 
 st.title("📊 Interaktywny Analizator Krzywych AI Pro")
 st.write("Wgraj plik Excel lub wklej link do Google Sheets. System automatycznie dopasuje metody sztucznej inteligencji.")
@@ -105,7 +117,7 @@ else:
         "Wklej link do Google Sheets:", 
         placeholder="https://docs.google.com/spreadsheets/d/..."
     )
-    st.caption("⚠️ Ważne: Arkusz w opcjach udostępniania musi mieć ustawione: 'Każdy użytkownik posiadający link może przeglądać'")
+    st.caption("⚠️ Ważne: Udostępnianie arkusza musi być ustawione na: 'Każdy użytkownik posiadający link może przeglądać'")
     
     if link_sheets:
         try:
@@ -126,7 +138,7 @@ if df is not None:
         krzywe = df.iloc[:, 1:]
         nazwy_krzywych = krzywe.columns.tolist()
         
-        # Dynamiczne budowanie listy metod
+        # Budowanie listy dostępnych metod
         lista_metod = [
             "K-means", 
             "Hierarchiczna (Euklidesowa)", 
@@ -138,14 +150,14 @@ if df is not None:
             lista_metod.append("K-Shape (Kształt fali)")
         if pytorch_dostepne:
             lista_metod.append("DEC (Głębokie Uczenie - Sieć Neuronowa)")
+            lista_metod.append("ADEC (Adwersarialne Głębokie Uczenie - Nowość)")
         
-        # Wybór parametrów - 3 kolumny
+        # Układ parametrów - 3 kolumny
         col_param1, col_param2, col_param3 = st.columns(3)
         with col_param1:
             metoda = st.selectbox("Wybierz metodę główną:", lista_metod)
         
         with col_param2:
-            # Metody zaawansowane (K-Shape i DEC) mają wbudowane specyficzne przygotowanie danych
             if "K-Shape" not in metoda and "DEC" not in metoda:
                 optymalizacja = st.selectbox(
                     "Wybierz wstępne przygotowanie danych:", 
@@ -160,13 +172,6 @@ if df is not None:
                 min_wielkosc = st.slider("Minimalna wielkość grupy (Min Cluster Size):", min_value=2, max_value=10, value=3)
             else:
                 liczba_grup = st.slider("Wybierz oczekiwaną liczbę grup (K):", min_value=2, max_value=10, value=4)
-            
-        # Alerty o brakujących bibliotekach
-        if not tslearn_dostepne or not pytorch_dostepne:
-            brakujace = []
-            if not tslearn_dostepne: brakujace.append("`tslearn` (dla K-Shape)")
-            if not pytorch_dostepne: brakujace.append("`torch` (dla DEC)")
-            st.info(f"💡 Aby odblokować wszystkie metody AI, dopisz do swojego `requirements.txt`: {', '.join(brakujace)}")
 
         # =================================================================
         # PRZETWARZANIE DANYCH WEJŚCIOWYCH
@@ -226,18 +231,13 @@ if df is not None:
             numery_grup = model.fit_predict(dataset) + 1
             
         elif "DEC" in metoda:
-            # PROCES DEEP EMBEDDED CLUSTERING (TRENING W LOCIE)
-            with st.spinner("🧠 Trwa trening sieci neuronowej (Autoenkodera)... Proszę czekać."):
-                # Zamiana danych na sensory PyTorch
+            with st.spinner("🧠 Trwa trening sieci neuronowej (DEC)..."):
                 X_tensor = torch.FloatTensor(dane_do_algorytmu)
-                
-                # Inicjalizacja sieci
                 input_dim = dane_do_algorytmu.shape[1]
                 net = AutoencoderKrzywych(input_dim=input_dim, latent_dim=4)
                 criterion = nn.MSELoss()
                 optimizer = optim.Adam(net.parameters(), lr=0.01)
                 
-                # Szybki trening sieci (150 epok - ultra szybkie dla małego zestawu)
                 net.train()
                 for epoch in range(150):
                     optimizer.zero_grad()
@@ -246,41 +246,93 @@ if df is not None:
                     loss.backward()
                     optimizer.step()
                 
-                # Wyciągnięcie skompresowanych cech (Latent Space) z sieci
                 net.eval()
                 with torch.no_grad():
                     kodowanie_cech, _ = net(X_tensor)
                     dane_skalowane_przez_siec = kodowanie_cech.numpy()
                 
-                # Klasteryzacja K-means na skompresowanych cechach z sieci neuronowej
                 model_dec = KMeans(n_clusters=liczba_grup, random_state=42, n_init=10)
                 numery_grup = model_dec.fit_predict(dane_skalowane_przez_siec) + 1
-            
-        # Tabela wynikowa
+
+        elif "ADEC" in metoda:
+            # PROCES ADWERSARIALNEGO GŁĘBOKIEGO UCZENIA (ADEC)
+            with st.spinner("⚔️ Trwa pojedynek sieci neuronowych (ADEC: Enkoder vs Dyskryminator)..."):
+                X_tensor = torch.FloatTensor(dane_do_algorytmu)
+                N_samples = dane_do_algorytmu.shape[0]
+                input_dim = dane_do_algorytmu.shape[1]
+                latent_dim = 4
+                
+                # Inicjalizacja obu zwalczających się sieci
+                autoencoder = AutoencoderKrzywych(input_dim=input_dim, latent_dim=latent_dim)
+                discriminator = DiscriminatorADEC(latent_dim=latent_dim)
+                
+                # Kryteria oceniania błędu i optymalizatory
+                criterion_recon = nn.MSELoss()
+                criterion_gan = nn.BCELoss() # Binary Cross Entropy dla klasyfikacji 0/1
+                
+                opt_ae = optim.Adam(autoencoder.parameters(), lr=0.01)
+                opt_disc = optim.Adam(discriminator.parameters(), lr=0.005)
+                
+                # Pętla pojedynku adwersarialnego (150 epok)
+                for epoch in range(150):
+                    # ---- ETAP 1: Rekonstrukcja kształtu (Autoenkoder uczy się odwzorowania) ----
+                    autoencoder.train()
+                    opt_ae.zero_grad()
+                    latent, reconstructed = autoencoder(X_tensor)
+                    loss_recon = criterion_recon(reconstructed, X_tensor)
+                    loss_recon.backward()
+                    opt_ae.step()
+                    
+                    # ---- ETAP 2: Trening Dyskryminatora (Uczy się rozpoznawać fałsz) ----
+                    discriminator.train()
+                    opt_disc.zero_grad()
+                    
+                    # Generowanie prawdziwego, idealnego ładu matematycznego (Rozkład Gaussa)
+                    real_distribution = torch.randn(N_samples, latent_dim)
+                    labels_real = torch.ones(N_samples, 1) # Flaga 1 = Prawda
+                    labels_fake = torch.zeros(N_samples, 1) # Flaga 0 = Sztuczne cechy
+                    
+                    # Sprawdzenie prawdziwego ładu
+                    out_real = discriminator(real_distribution)
+                    loss_d_real = criterion_gan(out_real, labels_real)
+                    
+                    # Sprawdzenie cech z Enkodera
+                    latent, _ = autoencoder(X_tensor)
+                    out_fake = discriminator(latent.detach()) # Odcinamy graf, by nie modyfikować enkodera w tym kroku
+                    loss_d_fake = criterion_gan(out_fake, labels_fake)
+                    
+                    # Suma błędu dyskryminatora i aktualizacja wag wag
+                    loss_d = loss_d_real + loss_d_fake
+                    loss_d.backward()
+                    opt_disc.step()
+                    
+                    # ---- ETAP 3: Trening Enkodera (Uczy się oszukiwać Dyskryminator) ----
+                    autoencoder.train()
+                    opt_ae.zero_grad()
+                    latent, _ = autoencoder(X_tensor)
+                    out_g = discriminator(latent)
+                    
+                    # Enkoder chce, by Dyskryminator uznał jego cechy za Prawdę (czyli oznaczył jako 1)
+                    loss_g = criterion_gan(out_g, labels_real)
+                    loss_g.backward()
+                    opt_ae.step()
+                
+                # Wyciągnięcie ostatecznie oczyszczonej przestrzeni cech adwersarialnych
+                autoencoder.eval()
+                with torch.no_grad():
+                    kodowanie_adec, _ = autoencoder(X_tensor)
+                    dane_oczyszczone_adec = kodowanie_adec.numpy()
+                
+                # Grupowanie końcowe na super-wyczyszczonych cechach z GAN-Autoenkodera
+                model_adec = KMeans(n_clusters=liczba_grup, random_state=42, n_init=10)
+                numery_grup = model_adec.fit_predict(dane_oczyszczone_adec) + 1
+
+        # Przygotowanie tabeli wynikowej
         wyniki = pd.DataFrame({
             'Krzywa': nazwy_krzywych,
             'Numer Grupy': numery_grup
         }).sort_values(by='Numer Grupy')
         
-        # Metoda Łokcia
-        if metoda == "K-means":
-            with st.expander("🔍 Podpowiedź matematyczna (Metoda Łokcia)"):
-                inercja = []
-                zakres_k = range(2, 11)
-                for k in zakres_k:
-                    km = KMeans(n_clusters=k, random_state=42, n_init=5)
-                    km.fit(dane_do_algorytmu)
-                    inercja.append(km.inertia_)
-                
-                fig_elbow, ax_elbow = plt.subplots(figsize=(10, 3))
-                ax_elbow.plot(zakres_k, inercja, 'ro-', linewidth=2)
-                ax_elbow.set_xlabel('Liczba grup (K)')
-                ax_elbow.set_ylabel('Inercja')
-                ax_elbow.set_xticks(list(zakres_k))
-                ax_elbow.grid(True, linestyle='--', alpha=0.5)
-                st.pyplot(fig_elbow)
-                plt.close(fig_elbow)
-
         # Prezentacja graficzna
         col_wykres, col_tabela = st.columns([3, 1])
         
@@ -325,7 +377,6 @@ if df is not None:
         # Raport tekstowy
         st.write("---")
         st.subheader("📝 Podsumowanie tekstowe grup")
-        
         unikalne_grupy = sorted(wyniki['Numer Grupy'].unique())
         
         for g in unikalne_grupy:
