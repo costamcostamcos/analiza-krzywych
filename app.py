@@ -27,6 +27,78 @@ except ImportError:
     pytorch_dostepne = False
 
 # =================================================================
+# NOWOŚĆ: IMPLEMENTACJA ALGORYTMU ROJU CZĄSTEK (PSO CLUSTERING)
+# =================================================================
+class PSOClustering:
+    def __init__(self, n_clusters, n_particles=15, max_iter=30, random_state=42):
+        self.n_clusters = n_clusters
+        self.n_particles = n_particles
+        self.max_iter = max_iter
+        self.random_state = random_state
+        
+    def _compute_sse(self, X, centroids):
+        # Wyliczanie odległości i sumy kwadratów błędów (SSE)
+        distances = np.linalg.norm(X[:, np.newaxis, :] - centroids, axis=2)
+        labels = np.argmin(distances, axis=1)
+        min_distances = np.min(distances, axis=1)
+        return np.sum(min_distances ** 2), labels
+
+    def fit_predict(self, X):
+        np.random.seed(self.random_state)
+        N, F = X.shape
+        K = self.n_clusters
+        
+        # Inicjalizacja pozycji cząstek (każda cząstka to zestaw K środków ciężkości)
+        positions = np.zeros((self.n_particles, K, F))
+        for i in range(self.n_particles):
+            idx = np.random.choice(N, K, replace=False)
+            positions[i] = X[idx]
+            
+        velocities = np.zeros_like(positions)
+        pbest_positions = np.copy(positions)
+        pbest_fitness = np.full(self.n_particles, np.inf)
+        
+        gbest_position = None
+        gbest_fitness = np.inf
+        
+        # Ocena początkowa roju
+        for i in range(self.n_particles):
+            fit, _ = self._compute_sse(X, positions[i])
+            pbest_fitness[i] = fit
+            if fit < gbest_fitness:
+                gbest_fitness = fit
+                gbest_position = np.copy(positions[i])
+                
+        # Parametry ruchu roju (wagi bezwładności i dążenia)
+        w, c1, c2 = 0.729, 1.494, 1.494
+        
+        # Pętla ewolucyjna roju
+        for iteration in range(self.max_iter):
+            r1 = np.random.rand(self.n_particles, K, 1)
+            r2 = np.random.rand(self.n_particles, K, 1)
+            
+            # Korekta prędkości i pozycji roju
+            velocities = (w * velocities + 
+                          c1 * r1 * (pbest_positions - positions) + 
+                          c2 * r2 * (gbest_position[np.newaxis, :, :] - positions))
+            positions += velocities
+            
+            # Sprawdzenie nowych pozycji
+            for i in range(self.n_particles):
+                fit, _ = self._compute_sse(X, positions[i])
+                if fit < pbest_fitness[i]:
+                    pbest_fitness[i] = fit
+                    pbest_positions[i] = np.copy(positions[i])
+                    
+                if fit < gbest_fitness:
+                    gbest_fitness = fit
+                    gbest_position = np.copy(positions[i])
+                    
+        # Zwrot ostatecznych etykiet grup na podstawie najlepszej cząstki
+        _, labels = self._compute_sse(X, gbest_position)
+        return labels + 1
+
+# =================================================================
 # ARCHITEKTURY SIECI NEURONOWYCH (DEC, ADEC, RDEC)
 # =================================================================
 if pytorch_dostepne:
@@ -138,9 +210,10 @@ if df is not None:
         krzywe = df.iloc[:, 1:]
         nazwy_krzywych = krzywe.columns.tolist()
         
-        # Budowanie listy dostępnych metod
+        # Budowanie listy dostępnych metod z uwzględnieniem nowej metody PSO
         lista_metod = [
             "K-means", 
+            "PSO (Optymalizacja Rojem Cząstek - Nowość!)",
             "Hierarchiczna (Euklidesowa)", 
             "HDBSCAN (Gęstościowa - Auto K)", 
             "GMM (Probabilistyczna)", 
@@ -152,7 +225,7 @@ if df is not None:
             lista_metod.append("DEC (Głębokie Uczenie - Sieć Neuronowa)")
             lista_metod.append("ADEC (Adwersarialne Głębokie Uczenie)")
             lista_metod.append("RDEC (Regularizowane Głębokie Uczenie)")
-            lista_metod.append("ADClust (Automatyczne Głębokie Uczenie - Nowość!)")
+            lista_metod.append("ADClust (Automatyczne Głębokie Uczenie)")
         
         # Układ parametrów - 3 kolumny
         col_param1, col_param2, col_param3 = st.columns(3)
@@ -173,7 +246,6 @@ if df is not None:
             if "HDBSCAN" in metoda:
                 min_wielkosc = st.slider("Minimalna wielkość grupy (Min Cluster Size):", min_value=2, max_value=10, value=3)
             elif "ADClust" in metoda:
-                # FIX: Zastąpienie wadliwego suwaka bezpiecznym, zablokowanym polem tekstowym
                 st.text_input("Liczba grup (K):", value="Automatycznie przez AI 🤖", disabled=True)
             else:
                 liczba_grup = st.slider("Wybierz oczekiwaną liczbę grup (K):", min_value=2, max_value=10, value=4)
@@ -212,6 +284,12 @@ if df is not None:
         if metoda == "K-means":
             model = KMeans(n_clusters=liczba_grup, random_state=42, n_init=10)
             numery_grup = model.fit_predict(dane_do_algorytmu) + 1
+            
+        elif "PSO" in metoda:
+            # Uruchomienie autorskiego roju cząstek
+            with st.spinner("🐝 Trwa symulacja lotu roju cząstek (PSO)..."):
+                model_pso = PSOClustering(n_clusters=liczba_grup, random_state=42)
+                numery_grup = model_pso.fit_predict(dane_do_algorytmu)
             
         elif metoda == "Hierarchiczna (Euklidesowa)":
             powiazania = linkage(dane_do_algorytmu, method='ward')
@@ -386,7 +464,7 @@ if df is not None:
             'Numer Grupy': numery_grup
         }).sort_values(by='Numer Grupy')
         
-        # Sekcja: METOTA ŁOKCIA (Tylko dla K-means)
+        # Sekcja: METODA ŁOKCIA (Tylko dla K-means)
         if metoda == "K-means":
             with st.expander("🔍 Podpowiedź matematyczna (Metoda Łokcia)"):
                 inercja = []
