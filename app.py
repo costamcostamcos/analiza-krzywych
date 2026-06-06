@@ -28,7 +28,6 @@ except ImportError:
 # ARCHITEKTURY SIECI NEURONOWYCH (DLA DEC ORAZ ADEC)
 # =================================================================
 if pytorch_dostepne:
-    # 1. Klasyczny Autoenkoder (używany w DEC oraz jako baza do ADEC)
     class AutoencoderKrzywych(nn.Module):
         def __init__(self, input_dim, latent_dim=4):
             super(AutoencoderKrzywych, self).__init__()
@@ -47,7 +46,6 @@ if pytorch_dostepne:
             reconstructed = self.decoder(latent)
             return latent, reconstructed
 
-    # NEW: 2. Dyskryminator dla algorytmu adwersarialnego ADEC
     class DiscriminatorADEC(nn.Module):
         def __init__(self, latent_dim=4):
             super(DiscriminatorADEC, self).__init__()
@@ -55,7 +53,7 @@ if pytorch_dostepne:
                 nn.Linear(latent_dim, 16),
                 nn.ReLU(),
                 nn.Linear(16, 1),
-                nn.Sigmoid() # Zwraca prawdopodobieństwo (0 lub 1)
+                nn.Sigmoid()
             )
         def forward(self, x):
             return self.model(x)
@@ -158,7 +156,7 @@ if df is not None:
             metoda = st.selectbox("Wybierz metodę główną:", lista_metod)
         
         with col_param2:
-            if "K-Shape" not in metoda and "DEC" not in metoda:
+            if "K-Shape" not in metoda and "DEC" not in metoda and "ADEC" not in metoda:
                 optymalizacja = st.selectbox(
                     "Wybierz wstępne przygotowanie danych:", 
                     ["Standardowa", "Analiza trendu", "FeatureExtraction", "MinMaxScaler", "Filtrowanie szumów"]
@@ -255,27 +253,22 @@ if df is not None:
                 numery_grup = model_dec.fit_predict(dane_skalowane_przez_siec) + 1
 
         elif "ADEC" in metoda:
-            # PROCES ADWERSARIALNEGO GŁĘBOKIEGO UCZENIA (ADEC)
-            with st.spinner("⚔️ Trwa pojedynek sieci neuronowych (ADEC: Enkoder vs Dyskryminator)..."):
+            with st.spinner("⚔️ Trwa pojedynek sieci neuronowych (ADEC)..."):
                 X_tensor = torch.FloatTensor(dane_do_algorytmu)
                 N_samples = dane_do_algorytmu.shape[0]
                 input_dim = dane_do_algorytmu.shape[1]
                 latent_dim = 4
                 
-                # Inicjalizacja obu zwalczających się sieci
                 autoencoder = AutoencoderKrzywych(input_dim=input_dim, latent_dim=latent_dim)
                 discriminator = DiscriminatorADEC(latent_dim=latent_dim)
                 
-                # Kryteria oceniania błędu i optymalizatory
                 criterion_recon = nn.MSELoss()
-                criterion_gan = nn.BCELoss() # Binary Cross Entropy dla klasyfikacji 0/1
+                criterion_gan = nn.BCELoss()
                 
                 opt_ae = optim.Adam(autoencoder.parameters(), lr=0.01)
                 opt_disc = optim.Adam(discriminator.parameters(), lr=0.005)
                 
-                # Pętla pojedynku adwersarialnego (150 epok)
                 for epoch in range(150):
-                    # ---- ETAP 1: Rekonstrukcja kształtu (Autoenkoder uczy się odwzorowania) ----
                     autoencoder.train()
                     opt_ae.zero_grad()
                     latent, reconstructed = autoencoder(X_tensor)
@@ -283,47 +276,38 @@ if df is not None:
                     loss_recon.backward()
                     opt_ae.step()
                     
-                    # ---- ETAP 2: Trening Dyskryminatora (Uczy się rozpoznawać fałsz) ----
                     discriminator.train()
                     opt_disc.zero_grad()
                     
-                    # Generowanie prawdziwego, idealnego ładu matematycznego (Rozkład Gaussa)
                     real_distribution = torch.randn(N_samples, latent_dim)
-                    labels_real = torch.ones(N_samples, 1) # Flaga 1 = Prawda
-                    labels_fake = torch.zeros(N_samples, 1) # Flaga 0 = Sztuczne cechy
+                    labels_real = torch.ones(N_samples, 1)
+                    labels_fake = torch.zeros(N_samples, 1)
                     
-                    # Sprawdzenie prawdziwego ładu
                     out_real = discriminator(real_distribution)
                     loss_d_real = criterion_gan(out_real, labels_real)
                     
-                    # Sprawdzenie cech z Enkodera
                     latent, _ = autoencoder(X_tensor)
-                    out_fake = discriminator(latent.detach()) # Odcinamy graf, by nie modyfikować enkodera w tym kroku
+                    out_fake = discriminator(latent.detach())
                     loss_d_fake = criterion_gan(out_fake, labels_fake)
                     
-                    # Suma błędu dyskryminatora i aktualizacja wag wag
                     loss_d = loss_d_real + loss_d_fake
                     loss_d.backward()
                     opt_disc.step()
                     
-                    # ---- ETAP 3: Trening Enkodera (Uczy się oszukiwać Dyskryminator) ----
                     autoencoder.train()
                     opt_ae.zero_grad()
                     latent, _ = autoencoder(X_tensor)
                     out_g = discriminator(latent)
                     
-                    # Enkoder chce, by Dyskryminator uznał jego cechy za Prawdę (czyli oznaczył jako 1)
                     loss_g = criterion_gan(out_g, labels_real)
                     loss_g.backward()
                     opt_ae.step()
                 
-                # Wyciągnięcie ostatecznie oczyszczonej przestrzeni cech adwersarialnych
                 autoencoder.eval()
                 with torch.no_grad():
                     kodowanie_adec, _ = autoencoder(X_tensor)
                     dane_oczyszczone_adec = kodowanie_adec.numpy()
                 
-                # Grupowanie końcowe na super-wyczyszczonych cechach z GAN-Autoenkodera
                 model_adec = KMeans(n_clusters=liczba_grup, random_state=42, n_init=10)
                 numery_grup = model_adec.fit_predict(dane_oczyszczone_adec) + 1
 
@@ -333,6 +317,27 @@ if df is not None:
             'Numer Grupy': numery_grup
         }).sort_values(by='Numer Grupy')
         
+        # =================================================================
+        # PRZYWRÓCONA SEKCJA: METODA ŁOKCIA (Tylko dla K-means)
+        # =================================================================
+        if metoda == "K-means":
+            with st.expander("🔍 Podpowiedź matematyczna (Metoda Łokcia)"):
+                inercja = []
+                zakres_k = range(2, 11)
+                for k in zakres_k:
+                    km = KMeans(n_clusters=k, random_state=42, n_init=5)
+                    km.fit(dane_do_algorytmu)
+                    inercja.append(km.inertia_)
+                
+                fig_elbow, ax_elbow = plt.subplots(figsize=(10, 3))
+                ax_elbow.plot(zakres_k, inercja, 'ro-', linewidth=2)
+                ax_elbow.set_xlabel('Liczba grup (K)')
+                ax_elbow.set_ylabel('Inercja')
+                ax_elbow.set_xticks(list(zakres_k))
+                ax_elbow.grid(True, linestyle='--', alpha=0.5)
+                st.pyplot(fig_elbow)
+                plt.close(fig_elbow)
+
         # Prezentacja graficzna
         col_wykres, col_tabela = st.columns([3, 1])
         
@@ -392,4 +397,4 @@ if df is not None:
     except Exception as ogolny_blad:
         st.error(f"Problem z przetworzeniem danych: {ogolny_blad}")
 else:
-    st.info("💡 Aby rozpocząć, wgraj plik z dysku lub wklej link do Google Sheets powyżej.")
+    st.info("💡 Aby rozpocząć, wgraj plik z dysku lub wklej link do Google Sheets glycogen powyżej.")
