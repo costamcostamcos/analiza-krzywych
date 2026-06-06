@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.cluster import KMeans, HDBSCAN, SpectralClustering
 from sklearn.mixture import GaussianMixture
+from sklearn.decomposition import NMF
 from sklearn.metrics import silhouette_score
 from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
 import io
@@ -27,7 +28,7 @@ except ImportError:
     pytorch_dostepne = False
 
 # =================================================================
-# NOWOŚĆ: IMPLEMENTACJA ALGORYTMU ROJU CZĄSTEK (PSO CLUSTERING)
+# IMPLEMENTACJA ALGORYTMU ROJU CZĄSTEK (PSO CLUSTERING)
 # =================================================================
 class PSOClustering:
     def __init__(self, n_clusters, n_particles=15, max_iter=30, random_state=42):
@@ -37,7 +38,6 @@ class PSOClustering:
         self.random_state = random_state
         
     def _compute_sse(self, X, centroids):
-        # Wyliczanie odległości i sumy kwadratów błędów (SSE)
         distances = np.linalg.norm(X[:, np.newaxis, :] - centroids, axis=2)
         labels = np.argmin(distances, axis=1)
         min_distances = np.min(distances, axis=1)
@@ -48,7 +48,6 @@ class PSOClustering:
         N, F = X.shape
         K = self.n_clusters
         
-        # Inicjalizacja pozycji cząstek (każda cząstka to zestaw K środków ciężkości)
         positions = np.zeros((self.n_particles, K, F))
         for i in range(self.n_particles):
             idx = np.random.choice(N, K, replace=False)
@@ -61,7 +60,6 @@ class PSOClustering:
         gbest_position = None
         gbest_fitness = np.inf
         
-        # Ocena początkowa roju
         for i in range(self.n_particles):
             fit, _ = self._compute_sse(X, positions[i])
             pbest_fitness[i] = fit
@@ -69,21 +67,17 @@ class PSOClustering:
                 gbest_fitness = fit
                 gbest_position = np.copy(positions[i])
                 
-        # Parametry ruchu roju (wagi bezwładności i dążenia)
         w, c1, c2 = 0.729, 1.494, 1.494
         
-        # Pętla ewolucyjna roju
         for iteration in range(self.max_iter):
             r1 = np.random.rand(self.n_particles, K, 1)
             r2 = np.random.rand(self.n_particles, K, 1)
             
-            # Korekta prędkości i pozycji roju
             velocities = (w * velocities + 
                           c1 * r1 * (pbest_positions - positions) + 
                           c2 * r2 * (gbest_position[np.newaxis, :, :] - positions))
             positions += velocities
             
-            # Sprawdzenie nowych pozycji
             for i in range(self.n_particles):
                 fit, _ = self._compute_sse(X, positions[i])
                 if fit < pbest_fitness[i]:
@@ -94,7 +88,6 @@ class PSOClustering:
                     gbest_fitness = fit
                     gbest_position = np.copy(positions[i])
                     
-        # Zwrot ostatecznych etykiet grup na podstawie najlepszej cząstki
         _, labels = self._compute_sse(X, gbest_position)
         return labels + 1
 
@@ -210,10 +203,11 @@ if df is not None:
         krzywe = df.iloc[:, 1:]
         nazwy_krzywych = krzywe.columns.tolist()
         
-        # Budowanie listy dostępnych metod z uwzględnieniem nowej metody PSO
+        # Lista metod z dołożonym algorytmem NMF
         lista_metod = [
             "K-means", 
-            "PSO (Optymalizacja Rojem Cząstek - Nowość!)",
+            "PSO (Optymalizacja Rojem Cząstek)",
+            "NMF (Nieujemna Faktoryzacja Macierzy - Nowość!)",
             "Hierarchiczna (Euklidesowa)", 
             "HDBSCAN (Gęstościowa - Auto K)", 
             "GMM (Probabilistyczna)", 
@@ -233,14 +227,14 @@ if df is not None:
             metoda = st.selectbox("Wybierz metodę główną:", lista_metod)
         
         with col_param2:
-            if "K-Shape" not in metoda and "DEC" not in metoda and "RDEC" not in metoda and "ADClust" not in metoda:
+            if "K-Shape" not in metoda and "DEC" not in metoda and "RDEC" not in metoda and "ADClust" not in metoda and "NMF" not in metoda:
                 optymalizacja = st.selectbox(
                     "Wybierz wstępne przygotowanie danych:", 
                     ["Standardowa", "Analiza trendu", "FeatureExtraction", "MinMaxScaler", "Filtrowanie szumów"]
                 )
             else:
                 optymalizacja = "Standardowa"
-                st.selectbox("Optymalizacja wbudowana w algorytm", ["Wbudowana (Auto-Embedding)"], disabled=True)
+                st.selectbox("Optymalizacja wbudowana w algorytm", ["Wbudowana (Auto-Embedding / Skalowanie)"], disabled=True)
                 
         with col_param3:
             if "HDBSCAN" in metoda:
@@ -286,10 +280,24 @@ if df is not None:
             numery_grup = model.fit_predict(dane_do_algorytmu) + 1
             
         elif "PSO" in metoda:
-            # Uruchomienie autorskiego roju cząstek
             with st.spinner("🐝 Trwa symulacja lotu roju cząstek (PSO)..."):
                 model_pso = PSOClustering(n_clusters=liczba_grup, random_state=42)
                 numery_grup = model_pso.fit_predict(dane_do_algorytmu)
+
+        elif "NMF" in metoda:
+            # IMPLEMENTACJA NIEUJEMNEJ FAKTORYZACJI MACIERZY (NMF)
+            with st.spinner("📐 Trwa faktoryzacja macierzy (NMF)..."):
+                # Sprawdzenie i wymuszenie nieujemności danych
+                if (dane_do_algorytmu < 0).any():
+                    scaler_nmf = MinMaxScaler()
+                    dane_nmf = scaler_nmf.fit_transform(dane_do_algorytmu)
+                else:
+                    dane_nmf = dane_do_algorytmu
+                
+                model_nmf = NMF(n_components=liczba_grup, init='nndsvd', random_state=42, max_iter=500)
+                W = model_nmf.fit_transform(dane_nmf)
+                # Przypisanie do grupy na podstawie dominującego komponentu bazowego
+                numery_grup = np.argmax(W, axis=1) + 1
             
         elif metoda == "Hierarchiczna (Euklidesowa)":
             powiazania = linkage(dane_do_algorytmu, method='ward')
