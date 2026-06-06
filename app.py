@@ -15,7 +15,7 @@ try:
 except ImportError:
     tslearn_dostepne = False
 
-# Bezpieczny import dla Głębokiego Uczenia (DEC / ADEC / PyTorch)
+# Bezpieczny import dla Głębokiego Uczenia
 try:
     import torch
     import torch.nn as nn
@@ -25,7 +25,7 @@ except ImportError:
     pytorch_dostepne = False
 
 # =================================================================
-# ARCHITEKTURY SIECI NEURONOWYCH (DLA DEC ORAZ ADEC)
+# ARCHITEKTURY SIECI NEURONOWYCH (DEC, ADEC, RDEC)
 # =================================================================
 if pytorch_dostepne:
     class AutoencoderKrzywych(nn.Module):
@@ -148,7 +148,8 @@ if df is not None:
             lista_metod.append("K-Shape (Kształt fali)")
         if pytorch_dostepne:
             lista_metod.append("DEC (Głębokie Uczenie - Sieć Neuronowa)")
-            lista_metod.append("ADEC (Adwersarialne Głębokie Uczenie - Nowość)")
+            lista_metod.append("ADEC (Adwersarialne Głębokie Uczenie)")
+            lista_metod.append("RDEC (Regularizowane Głębokie Uczenie - Nowość)")
         
         # Układ parametrów - 3 kolumny
         col_param1, col_param2, col_param3 = st.columns(3)
@@ -156,7 +157,7 @@ if df is not None:
             metoda = st.selectbox("Wybierz metodę główną:", lista_metod)
         
         with col_param2:
-            if "K-Shape" not in metoda and "DEC" not in metoda and "ADEC" not in metoda:
+            if "K-Shape" not in metoda and "DEC" not in metoda and "RDEC" not in metoda:
                 optymalizacja = st.selectbox(
                     "Wybierz wstępne przygotowanie danych:", 
                     ["Standardowa", "Analiza trendu", "FeatureExtraction", "MinMaxScaler", "Filtrowanie szumów"]
@@ -311,15 +312,50 @@ if df is not None:
                 model_adec = KMeans(n_clusters=liczba_grup, random_state=42, n_init=10)
                 numery_grup = model_adec.fit_predict(dane_oczyszczone_adec) + 1
 
+        elif "RDEC" in metoda:
+            # PROCES REGULARIZOWANEGO GŁĘBOKIEGO UCZENIA (RDEC)
+            with st.spinner("🛡️ Trwa trening sieci z barierą regularyzacji (RDEC)..."):
+                X_tensor = torch.FloatTensor(dane_do_algorytmu)
+                input_dim = dane_do_algorytmu.shape[1]
+                net = AutoencoderKrzywych(input_dim=input_dim, latent_dim=4)
+                criterion = nn.MSELoss()
+                
+                # Użycie weight_decay=1e-4 włącza automatyczną regularyzację L2 (karę za skomplikowanie wag sieci)
+                optimizer = optim.Adam(net.parameters(), lr=0.01, weight_decay=1e-4)
+                
+                net.train()
+                for epoch in range(150):
+                    optimizer.zero_grad()
+                    latent, reconstructed = net(X_tensor)
+                    
+                    # Podstawowa strata rekonstrukcji kształtu
+                    loss_recon = criterion(reconstructed, X_tensor)
+                    
+                    # Dodatkowa kara za "rozrzut" w przestrzeni ukrytej (zmusza klastry do zwartości geometrycznej)
+                    penalty_latent = torch.mean(torch.norm(latent, p=2, dim=1))
+                    
+                    # Całkowita strata z barierą regularyzacji
+                    loss = loss_recon + 0.01 * penalty_latent
+                    
+                    loss.backward()
+                    optimizer.step()
+                
+                net.eval()
+                with torch.no_grad():
+                    kodowanie_rdec, _ = net(X_tensor)
+                    dane_stabilne_rdec = kodowanie_rdec.numpy()
+                
+                # Klasteryzacja na super-stabilnych cechach
+                model_rdec = KMeans(n_clusters=liczba_grup, random_state=42, n_init=10)
+                numery_grup = model_rdec.fit_predict(dane_stabilne_rdec) + 1
+
         # Przygotowanie tabeli wynikowej
         wyniki = pd.DataFrame({
             'Krzywa': nazwy_krzywych,
             'Numer Grupy': numery_grup
         }).sort_values(by='Numer Grupy')
         
-        # =================================================================
-        # PRZYWRÓCONA SEKCJA: METODA ŁOKCIA (Tylko dla K-means)
-        # =================================================================
+        # Sekcja: METODA ŁOKCIA (Dla K-means)
         if metoda == "K-means":
             with st.expander("🔍 Podpowiedź matematyczna (Metoda Łokcia)"):
                 inercja = []
@@ -385,7 +421,7 @@ if df is not None:
         unikalne_grupy = sorted(wyniki['Numer Grupy'].unique())
         
         for g in unikalne_grupy:
-            krzywe_w_grupie = wyniki[wyniki['Numer Grupy'] == g]['Krzywa'].tolist()
+            krzywe_w_grupie =wyniki[wyniki['Numer Grupy'] == g]['Krzywa'].tolist()
             lista_str = ", ".join(krzywe_w_grupie)
             
             if g == 0:
@@ -397,4 +433,4 @@ if df is not None:
     except Exception as ogolny_blad:
         st.error(f"Problem z przetworzeniem danych: {ogolny_blad}")
 else:
-    st.info("💡 Aby rozpocząć, wgraj plik z dysku lub wklej link do Google Sheets glycogen powyżej.")
+    st.info("💡 Aby rozpocząć, wgraj plik z dysku lub wklej link do Google Sheets powyżej.")
