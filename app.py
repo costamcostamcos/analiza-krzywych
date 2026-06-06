@@ -203,12 +203,12 @@ if df is not None:
         krzywe = df.iloc[:, 1:]
         nazwy_krzywych = krzywe.columns.tolist()
         
-        # Lista metod głównych
+        # Zaktualizowana lista metod z poprawną nazwą naukową metody Warda
         lista_metod = [
             "K-means", 
             "PSO (Optymalizacja Rojem Cząstek)",
             "NMF (Nieujemna Faktoryzacja Macierzy)",
-            "Hierarchiczna (Euklidesowa)", 
+            "Hierarchiczna Aglomeracyjna (metoda Warda)", 
             "HDBSCAN (Gęstościowa - Auto K)", 
             "GMM (Probabilistyczna)", 
             "Spectral Clustering"
@@ -296,7 +296,8 @@ if df is not None:
                 W = model_nmf.fit_transform(dane_nmf)
                 numery_grup = np.argmax(W, axis=1) + 1
             
-        elif metoda == "Hierarchiczna (Euklidesowa)":
+        elif "Hierarchiczna" in metoda:
+            # IMPLEMENTACJA METODY WARDA (Aglomeracyjna z odległością Ward)
             powiazania = linkage(dane_do_algorytmu, method='ward')
             numery_grup = fcluster(powiazania, t=liczba_grup, criterion='maxclust')
             
@@ -470,7 +471,7 @@ if df is not None:
         }).sort_values(by='Numer Grupy')
         
         # =================================================================
-        # ZMODYFIKOWANA SEKCJA: METODA ŁOKCIA (Teraz dostępna zawsze dla manualnego K)
+        # PANEL PODPOWIEDZI MATEMATYCZNEJ (Zawsze dostępny dla metod z suwakiem)
         # =================================================================
         if "HDBSCAN" not in metoda and "ADClust" not in metoda:
             with st.expander("🔍 Podpowiedź matematyczna (Metoda Łokcia)"):
@@ -485,7 +486,7 @@ if df is not None:
                 fig_elbow, ax_elbow = plt.subplots(figsize=(10, 3))
                 ax_elbow.plot(zakres_k, inercja, 'ro-', linewidth=2)
                 ax_elbow.set_xlabel('Liczba grup (K)')
-                ax_elbow.set_ylabel('Inercja (Suma kwadratów odległości)')
+                ax_elbow.set_ylabel('Inercja (Suma odległości)')
                 ax_elbow.set_xticks(list(zakres_k))
                 ax_elbow.grid(True, linestyle='--', alpha=0.5)
                 st.pyplot(fig_elbow)
@@ -500,6 +501,7 @@ if df is not None:
             cmap = plt.get_cmap('tab10')
             
             if "Hierarchiczna" in metoda:
+                # Wyświetlamy tradycyjne, czytelne drzewo podobieństwa dla metody Warda
                 powiazania_tree = linkage(dane_do_algorytmu, method='ward')
                 dendrogram(powiazania_tree, labels=nazwy_krzywych, leaf_rotation=90, leaf_font_size=9, ax=ax)
                 ax.set_title("Drzewo Podobieństwa (Dendrogram)")
