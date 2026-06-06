@@ -203,11 +203,11 @@ if df is not None:
         krzywe = df.iloc[:, 1:]
         nazwy_krzywych = krzywe.columns.tolist()
         
-        # Lista metod z dołożonym algorytmem NMF
+        # Lista metod głównych
         lista_metod = [
             "K-means", 
             "PSO (Optymalizacja Rojem Cząstek)",
-            "NMF (Nieujemna Faktoryzacja Macierzy - Nowość!)",
+            "NMF (Nieujemna Faktoryzacja Macierzy)",
             "Hierarchiczna (Euklidesowa)", 
             "HDBSCAN (Gęstościowa - Auto K)", 
             "GMM (Probabilistyczna)", 
@@ -285,9 +285,7 @@ if df is not None:
                 numery_grup = model_pso.fit_predict(dane_do_algorytmu)
 
         elif "NMF" in metoda:
-            # IMPLEMENTACJA NIEUJEMNEJ FAKTORYZACJI MACIERZY (NMF)
             with st.spinner("📐 Trwa faktoryzacja macierzy (NMF)..."):
-                # Sprawdzenie i wymuszenie nieujemności danych
                 if (dane_do_algorytmu < 0).any():
                     scaler_nmf = MinMaxScaler()
                     dane_nmf = scaler_nmf.fit_transform(dane_do_algorytmu)
@@ -296,7 +294,6 @@ if df is not None:
                 
                 model_nmf = NMF(n_components=liczba_grup, init='nndsvd', random_state=42, max_iter=500)
                 W = model_nmf.fit_transform(dane_nmf)
-                # Przypisanie do grupy na podstawie dominującego komponentu bazowego
                 numery_grup = np.argmax(W, axis=1) + 1
             
         elif metoda == "Hierarchiczna (Euklidesowa)":
@@ -472,9 +469,12 @@ if df is not None:
             'Numer Grupy': numery_grup
         }).sort_values(by='Numer Grupy')
         
-        # Sekcja: METODA ŁOKCIA (Tylko dla K-means)
-        if metoda == "K-means":
+        # =================================================================
+        # ZMODYFIKOWANA SEKCJA: METODA ŁOKCIA (Teraz dostępna zawsze dla manualnego K)
+        # =================================================================
+        if "HDBSCAN" not in metoda and "ADClust" not in metoda:
             with st.expander("🔍 Podpowiedź matematyczna (Metoda Łokcia)"):
+                st.write("Poniższy wykres inercji pomaga dobrać optymalną liczbę grup (K) dla aktualnie przygotowanych danych pomiarowych.")
                 inercja = []
                 zakres_k = range(2, 11)
                 for k in zakres_k:
@@ -485,7 +485,7 @@ if df is not None:
                 fig_elbow, ax_elbow = plt.subplots(figsize=(10, 3))
                 ax_elbow.plot(zakres_k, inercja, 'ro-', linewidth=2)
                 ax_elbow.set_xlabel('Liczba grup (K)')
-                ax_elbow.set_ylabel('Inercja')
+                ax_elbow.set_ylabel('Inercja (Suma kwadratów odległości)')
                 ax_elbow.set_xticks(list(zakres_k))
                 ax_elbow.grid(True, linestyle='--', alpha=0.5)
                 st.pyplot(fig_elbow)
