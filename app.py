@@ -173,7 +173,8 @@ if df is not None:
             if "HDBSCAN" in metoda:
                 min_wielkosc = st.slider("Minimalna wielkość grupy (Min Cluster Size):", min_value=2, max_value=10, value=3)
             elif "ADClust" in metoda:
-                st.slider("Liczba grup dobierana automatycznie przez AI", min_value=0, max_value=0, value=0, disabled=True)
+                # FIX: Zastąpienie wadliwego suwaka bezpiecznym, zablokowanym polem tekstowym
+                st.text_input("Liczba grup (K):", value="Automatycznie przez AI 🤖", disabled=True)
             else:
                 liczba_grup = st.slider("Wybierz oczekiwaną liczbę grup (K):", min_value=2, max_value=10, value=4)
 
@@ -344,7 +345,6 @@ if df is not None:
                 numery_grup = model_rdec.fit_predict(dane_stabilne_rdec) + 1
 
         elif "ADClust" in metoda:
-            # PROCES AUTOMATYCZNEGO GŁĘBOKIEGO KLASTEROWANIA (ADClust)
             with st.spinner("🤖 Trwa inteligentny trening ADClust. Sieć neuronowa sama ustala liczbę grup..."):
                 X_tensor = torch.FloatTensor(dane_do_algorytmu)
                 input_dim = dane_do_algorytmu.shape[1]
@@ -352,7 +352,6 @@ if df is not None:
                 criterion = nn.MSELoss()
                 optimizer = optim.Adam(net.parameters(), lr=0.01)
                 
-                # 1. Wstępny trening enkodera, by ułożył dane
                 net.train()
                 for epoch in range(120):
                     optimizer.zero_grad()
@@ -366,11 +365,9 @@ if df is not None:
                     latent_features, _ = net(X_tensor)
                     dane_ukryte = latent_features.numpy()
                 
-                # 2. Automatyczne poszukiwanie optymalnego K za pomocą metryki Silhouette wewnątrz sieci
                 najlepsze_k = 2
                 najwyzszy_wynik = -1
                 
-                # Skanujemy potencjalne podziały od 2 do 8 grup
                 for k_test in range(2, 9):
                     km_test = KMeans(n_clusters=k_test, random_state=42, n_init=5)
                     etykiety_test = km_test.fit_predict(dane_ukryte)
@@ -379,7 +376,6 @@ if df is not None:
                         najwyzszy_wynik = score
                         najlepsze_k = k_test
                 
-                # 3. Finalny podział na optymalnej liczbie grup wyznaczonej przez AI
                 model_adclust = KMeans(n_clusters=najlepsze_k, random_state=42, n_init=10)
                 numery_grup = model_adclust.fit_predict(dane_ukryte) + 1
                 st.success(f"✨ Sieć ADClust automatycznie ustaliła, że optymalna liczba grup to: **{najlepsze_k}**")
