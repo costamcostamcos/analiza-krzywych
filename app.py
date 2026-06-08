@@ -222,13 +222,13 @@ if df is not None:
         krzywe = df.iloc[:, 1:]
         nazwy_krzywych = krzywe.columns.tolist()
         
-        # Rozbudowana lista metod o pozycję BGMM
+        # Lista metod głównych
         lista_metod = [
             "K-means", 
             "PSO (Optymalizacja Rojem Cząstek)",
             "NMF (Nieujemna Faktoryzacja Macierzy)",
             "GMM (Probabilistyczna)", 
-            "BGMM (Bayesowski GMM - Nowość!)",
+            "BGMM (Bayesowski GMM)",
             "Hierarchiczna Aglomeracyjna (metoda Warda)", 
             "HDBSCAN (Gęstościowa - Auto K)", 
             "Spectral Clustering"
@@ -258,7 +258,7 @@ if df is not None:
         with col_param2:
             if "K-Shape" not in metoda and "DEC" not in metoda and "RDEC" not in metoda and "ADClust" not in metoda and "NMF" not in metoda:
                 optymalizacja = st.selectbox(
-                    "Wybierz wstępne祈ygotowanie danych:", 
+                    "Wybierz wstępne przygotowanie danych:", 
                     ["Standardowa", "Analiza trendu", "FeatureExtraction", "MinMaxScaler", "Filtrowanie szumów"]
                 )
             else:
@@ -271,7 +271,6 @@ if df is not None:
             elif "ADClust" in metoda:
                 st.text_input("Liczba grup (K):", value="Automatycznie przez AI 🤖", disabled=True)
             else:
-                # Dla BGMM liczba grup stanowi górną granicę matematyczną (Prior limit)
                 label_k = "Maksymalna liczba grup (K):" if "BGMM" in metoda else "Wybierz oczekiwaną liczbę grup (K):"
                 liczba_grup = st.slider(label_k, min_value=2, max_value=10, value=5)
 
@@ -287,13 +286,25 @@ if df is not None:
             scaler = StandardScaler()
             dane_do_algorytmu = scaler.fit_transform(krzywe_opt)
         elif optymalizacja == "FeatureExtraction":
+            # REWOLUCJA: EKSTRAKCJA CECH ROZBUDOWANA O STATYSTYKĘ WYŻSZYCH RZĘDÓW ORAZ SPEKTRUM FFT
             cechy = pd.DataFrame(index=nazwy_krzywych)
             cechy['Max'] = krzywe.max().values
             cechy['Poz_Max'] = krzywe.idxmax().apply(lambda idx: x.iloc[idx]).values
             cechy['Srednia'] = krzywe.mean().values
             cechy['Std'] = krzywe.std().values
+            cechy['Skośność'] = krzywe.skew().values
+            cechy['Kurtoza'] = krzywe.kurt().values
+            
+            # Obliczenie szybkiej transformaty Fouriera (FFT amplituda sygnału) dla każdej krzywej pomiarowej
+            fft_amplitudy = np.abs(np.fft.rfft(krzywe, axis=0))
+            # Wyciągamy pierwsze 3 harmoniczne (częstotliwości składowe), ignorując indeks 0 (składowa stała DC)
+            maks_czestotliwosci = min(4, fft_amplitudy.shape[0])
+            for f_idx in range(1, maks_czestotliwosci):
+                cechy[f'FFT_Składowa_{f_idx}'] = fft_amplitudy[f_idx, :]
+            
             scaler = StandardScaler()
             dane_do_algorytmu = scaler.fit_transform(cechy)
+            
         elif optymalizacja == "MinMaxScaler":
             scaler = MinMaxScaler()
             dane_do_algorytmu = scaler.fit_transform(krzywe_T)
@@ -334,7 +345,6 @@ if df is not None:
             numery_grup = model.fit_predict(dane_do_algorytmu) + 1
 
         elif "BGMM" in metoda:
-            # NOWOŚĆ: IMPLEMENTACJA BAYESOWSKIEGO GMM Z REGULARYZACJĄ DIAG
             with st.spinner("🔮 Trwa wnioskowanie bayesowskie (BGMM)..."):
                 model_bgmm = BayesianGaussianMixture(
                     n_components=liczba_grup, 
@@ -515,7 +525,7 @@ if df is not None:
         }).sort_values(by='Numer Grupy')
         
         # =================================================================
-        # PANEL PODPOWIEDZI MATEMATYCZNEH (Dostępny dla wszystkich manualnych K)
+        # PANEL PODPOWIEDZI MATEMATYCZNEJ (Dostępny dla wszystkich manualnych K)
         # =================================================================
         if "HDBSCAN" not in metoda and "ADClust" not in metoda:
             with st.expander("🔍 Podpowiedź matematyczna (Metoda Łokcia)"):
