@@ -31,7 +31,7 @@ except ImportError:
 # SŁOWNIK INTELIGENTNYCH OPISÓW METOD KLASTERYZACJI
 # =================================================================
 OPISY_METOD = {
-    "K-means": "Dzieli przestrzeń cech na tzw. obszary Voronoia. Algorytm dąży do minimalizacji wariancji wewnątrzklastrowej poprzez naprzemienne przypisywanie obiektów do najbliższych prototypów (środków ciężkości) i aktualizację tych środków. Najlepiej sprawdza się, gdy klastry są zwarte, odizolowane i sferyczne.",
+    "K-means": "Dzieli przestrzeń cech na tzw. obszary Voronoia. Algorytm dąży to minimalizacji wariancji wewnątrzklastrowej poprzez naprzemienne przypisywanie obiektów do najbliższych prototypów (środków ciężkości) i aktualizację tych środków. Najlepiej sprawdza się, gdy klastry są zwarte, odizolowane i sferyczne.",
     "PSO (Optymalizacja Rojem Cząstek)": "Metaheurystyka inspirowana naturą, imitująca zachowanie stada ptaków. Zamiast pojedynczego punktu startowego, w wielowymiarowej przestrzeni porusza się populacja (rój) cząstek-zwiadowców. Każda cząstka koryguje swój tor lotu na podstawie własnych doświadczeń oraz sukcesów całego roju, co pozwala skutecznie omijać lokalne minima matematyczne.",
     "NMF (Nieujemna Faktoryzacja Macierzy)": "Algorytm nieliniowej redukcji wymiarowości, który rozkłada macierz danych na iloczyn dwóch macierzy o elementach wyłącznie nieujemnych. Traktuje Twoje krzywe jako kombinację liniową bazowych, nieujemnych 'klocków' sygnałowych. Przypisanie do grupy następuje na podstawie dominującego komponentu fizycznego, co eliminuje nienaturalne matematycznie wartości ujemne.",
     "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich. Zakłada, że struktura danych pod wejściem składa się z określonej liczby wielowymiarowych rozkładów normalnych. Realizuje tzw. 'miękkie przypisanie' (soft clustering) – zamiast suchej decyzji 0/1, wylicza procentową pewność (prawdopodobieństwo), z jaką dana krzywa pasuje do każdego z klastrów. Idealne do identyfikacji próbek granicznych.",
@@ -335,7 +335,7 @@ if df is not None:
             dane_do_algorytmu = scaler.fit_transform(krzywe_T)
             
         # =================================================================
-        # KLASTERYZACJA ALGORYTMAMI - NAPRAWIONE WARUNKI STR-MATCHING
+        # KLASTERYZACJA ALGORYTMAMI
         # =================================================================
         if metoda == "K-means":
             model = KMeans(n_clusters=liczba_grup, random_state=42, n_init=10)
@@ -359,7 +359,6 @@ if df is not None:
                 numery_grup = np.argmax(W, axis=1) + 1
             
         elif "GMM (Probabilistyczna)" in metoda:
-            # FIX: Precyzyjne dopasowanie pełnej nazwy usunęło błąd 'numery_grup' is not defined
             model = GaussianMixture(n_components=liczba_grup, random_state=42, n_init=5)
             numery_grup = model.fit_predict(dane_do_algorytmu) + 1
 
@@ -548,27 +547,36 @@ if df is not None:
         }).sort_values(by='Numer Grupy')
         
         # =================================================================
-        # ROZBUDOWANY SYSTEM PODPOWIEDZI (ZAKŁADKI TABS) + NOWY ALGORYTM KNEEDLE
+        # ZMODYFIKOWANY SYSTEM PODPOWIEDZI (ZAKŁADKI TABS) + GAP STATISTIC
         # =================================================================
         if "HDBSCAN" not in metoda and "ADClust" not in metoda:
             with st.expander("🔍 Zaawansowana Podpowiedź Matematyczna (Dobór liczby klastrów K)", expanded=False):
-                tab_elbow, tab_silhouette, tab_bic = st.tabs([
+                tab_elbow, tab_silhouette, tab_bic, tab_gap = st.tabs([
                     "📐 Metoda Łokcia & Kneedle", 
                     "👤 Silhouette Score (Spójność)", 
-                    "🔮 Indeks BIC (Kryterium Bayesowskie)"
+                    "🔮 Indeks BIC (Kryterium Bayesowskie)",
+                    "📊 Statystyka Przerwy (Gap Statistic)"
                 ])
                 
                 zakres_k = range(2, 11)
                 
+                # Jedna wspólna pętla obliczeniowa dla optymalizacji wydajności aplikacji
+                inercja = []
+                sylwetki = []
+                bic_values = []
+                
+                for k in zakres_k:
+                    km = KMeans(n_clusters=k, random_state=42, n_init=5)
+                    etykiety = km.fit_predict(dane_do_algorytmu)
+                    inercja.append(km.inertia_)
+                    sylwetki.append(silhouette_score(dane_do_algorytmu, etykiety))
+                    
+                    gmm_test = GaussianMixture(n_components=k, covariance_type='diag', random_state=42, n_init=2)
+                    gmm_test.fit(dane_do_algorytmu)
+                    bic_values.append(gmm_test.bic(dane_do_algorytmu))
+                
                 with tab_elbow:
                     st.write("📈 **Zasada interpretacji:** Szukamy wyraźnego załamania wykresu ('łokcia'). Fioletowa przerywana linia reprezentuje automatyczny wybór algorytmu Kneedle.")
-                    inercja = []
-                    for k in zakres_k:
-                        km = KMeans(n_clusters=k, random_state=42, n_init=5)
-                        km.fit(dane_do_algorytmu)
-                        inercja.append(km.inertia_)
-                    
-                    # NOWOŚĆ: IMPLEMENTACJA ALGORYTMU KNEEDLE (KNEE POINT DETECTION)
                     p1 = np.array([zakres_k[0], inercja[0]])
                     p2 = np.array([zakres_k[-1], inercja[-1]])
                     wektor_linii = p2 - p1
@@ -598,12 +606,6 @@ if df is not None:
                     
                 with tab_silhouette:
                     st.write("📈 **Zasada interpretacji:** Szukamy **globalnego maksimum** (najwyższego piku). Wyższa wartość oznacza logicznie odizolowane, spójne klastry.")
-                    sylwetki = []
-                    for k in zakres_k:
-                        km = KMeans(n_clusters=k, random_state=42, n_init=5)
-                        etykiety = km.fit_predict(dane_do_algorytmu)
-                        sylwetki.append(silhouette_score(dane_do_algorytmu, etykiety))
-                    
                     fig_sil, ax_sil = plt.subplots(figsize=(10, 3.2))
                     ax_sil.plot(zakres_k, sylwetki, 'bo-', linewidth=2)
                     ax_sil.set_xlabel('Liczba klastrów (K)')
@@ -615,12 +617,6 @@ if df is not None:
                     
                 with tab_bic:
                     st.write("📈 **Zasada interpretacji:** Szukamy **globalnego minimum** (najniższego punktu). Kryterium BIC nakłada silną matematyczną karę za nadmierne komplikowanie modelu.")
-                    bic_values = []
-                    for k in zakres_k:
-                        gmm_test = GaussianMixture(n_components=k, covariance_type='diag', random_state=42, n_init=2)
-                        gmm_test.fit(dane_do_algorytmu)
-                        bic_values.append(gmm_test.bic(dane_do_algorytmu))
-                    
                     fig_bic, ax_bic = plt.subplots(figsize=(10, 3.2))
                     ax_bic.plot(zakres_k, bic_values, 'go-', linewidth=2)
                     ax_bic.set_xlabel('Liczba klastrów (K)')
@@ -629,6 +625,39 @@ if df is not None:
                     ax_bic.grid(True, linestyle='--', alpha=0.5)
                     st.pyplot(fig_bic)
                     plt.close(fig_bic)
+
+                with tab_gap:
+                    st.write("📈 **Zasada interpretacji:** Szukamy **globalnego maksimum** (najwyższego punktu) wykresu Gap. Wartość ta reprezentuje moment, w którym podział Twoich prawdziwych krzywych najsilniej odbiega od rozkładu całkowicie losowego szumu.")
+                    with st.spinner("Trwa obliczanie Statystyki Przerwy (Gap Statistic)..."):
+                        B = 5
+                        shape = dane_do_algorytmu.shape
+                        min_vals = dane_do_algorytmu.min(axis=0)
+                        max_vals = dane_do_algorytmu.max(axis=0)
+                        
+                        log_Wk = np.log(inercja)
+                        log_Wk_ref = np.zeros((B, len(zakres_k)))
+                        
+                        for b in range(B):
+                            losowe_dane = np.random.uniform(min_vals, max_vals, size=shape)
+                            for idx_k, k in enumerate(zakres_k):
+                                km_ref = KMeans(n_clusters=k, random_state=42 + b, n_init=3)
+                                km_ref.fit(losowe_dane)
+                                log_Wk_ref[b, idx_k] = np.log(km_ref.inertia_)
+                        
+                        mean_log_Wk_ref = np.mean(log_Wk_ref, axis=0)
+                        sdk = np.std(log_Wk_ref, axis=0)
+                        sk = sdk * np.sqrt(1 + 1.0 / B)
+                        gaps = mean_log_Wk_ref - log_Wk
+                        
+                        fig_gap, ax_gap = plt.subplots(figsize=(10, 3.2))
+                        ax_gap.errorbar(zakres_k, gaps, yerr=sk, fmt='mo-', linewidth=2, capsize=4, label='Wartość Gap')
+                        ax_gap.set_xlabel('Liczba klastrów (K)')
+                        ax_gap.set_ylabel('Statystyka Gap')
+                        ax_gap.set_xticks(list(zakres_k))
+                        ax_gap.grid(True, linestyle='--', alpha=0.5)
+                        ax_gap.legend()
+                        st.pyplot(fig_gap)
+                        plt.close(fig_gap)
 
         # Prezentacja graficzna wynikowa
         col_wykres, col_tabela = st.columns([3, 1])
