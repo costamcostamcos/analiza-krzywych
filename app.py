@@ -36,7 +36,8 @@ OPISY_METOD = {
     "NMF (Nieujemna Faktoryzacja Macierzy)": "Rozkłada krzywe wyłącznie na czyste składowe dodatnie. Idealna do fizycznych sygnałów i danych laboratoryjnych.",
     "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich. Podejście probabilistyczne – wylicza procentową pewność przypisania krzywej do danej grupy.",
     "BGMM (Bayesowski GMM)": "Zaawansowany probabilistyczny model Bayesowski. Samodzielnie wygasza nadmiarowe klastry i jest ultra-odporny na małą liczbę próbek.",
-    "Hierarchiczna Aglomeracyjna (metoda Warda)": "Buduje stabilne drzewo podobieństwa (dendrogram), minimalizując wariancję i błąd wewnątrz tworzonych klastrów.",
+    "Hierarchiczna Aglomeracyjna (metoda Warda)": "Buduje stabilne drzewo podobieństwa (dendrogram), minimalizując wariancję i błąd wewnątrz tworzonych klastrów. Wymaga miary Euklidesowej.",
+    "Hierarchiczna Korelacyjna (metoda średnich)": "NOWOŚĆ! Grupuje linie na podstawie współbieżności kształtu (korelacji). Całkowicie ignoruje przesunięcia w pionie oraz skalę amplitudy.",
     "HDBSCAN (Gęstościowa - Auto K)": "Klastrowanie gęstościowe. Samo wykrywa optymalną liczbę grup i automatycznie odrzuca anomalie oraz szum (oznaczane jako Grupa 0).",
     "Spectral Clustering": "Klastrowanie spektralne oparte na teorii grafów. Projektuje sieć powiązań, świetne do skomplikowanych, zagnieżdżonych struktur.",
     "K-Shape (Kształt fali)": "Stworzony do serii czasowych. Wykorzystuje korelację wzajemną – rozpoznaje kształt fali nawet przy przesunięciu piku w lewo lub prawo.",
@@ -222,7 +223,7 @@ if df is not None:
         krzywe = df.iloc[:, 1:]
         nazwy_krzywych = krzywe.columns.tolist()
         
-        # Lista metod głównych
+        # Lista metod głównych z uwzględnieniem nowej hierarchii korelacyjnej
         lista_metod = [
             "K-means", 
             "PSO (Optymalizacja Rojem Cząstek)",
@@ -230,6 +231,7 @@ if df is not None:
             "GMM (Probabilistyczna)", 
             "BGMM (Bayesowski GMM)",
             "Hierarchiczna Aglomeracyjna (metoda Warda)", 
+            "Hierarchiczna Korelacyjna (metoda średnich)",
             "HDBSCAN (Gęstościowa - Auto K)", 
             "Spectral Clustering"
         ]
@@ -286,7 +288,6 @@ if df is not None:
             scaler = StandardScaler()
             dane_do_algorytmu = scaler.fit_transform(krzywe_opt)
         elif optymalizacja == "FeatureExtraction":
-            # REWOLUCJA: EKSTRAKCJA CECH ROZBUDOWANA O STATYSTYKĘ WYŻSZYCH RZĘDÓW ORAZ SPEKTRUM FFT
             cechy = pd.DataFrame(index=nazwy_krzywych)
             cechy['Max'] = krzywe.max().values
             cechy['Poz_Max'] = krzywe.idxmax().apply(lambda idx: x.iloc[idx]).values
@@ -295,9 +296,7 @@ if df is not None:
             cechy['Skośność'] = krzywe.skew().values
             cechy['Kurtoza'] = krzywe.kurt().values
             
-            # Obliczenie szybkiej transformaty Fouriera (FFT amplituda sygnału) dla każdej krzywej pomiarowej
             fft_amplitudy = np.abs(np.fft.rfft(krzywe, axis=0))
-            # Wyciągamy pierwsze 3 harmoniczne (częstotliwości składowe), ignorując indeks 0 (składowa stała DC)
             maks_czestotliwosci = min(4, fft_amplitudy.shape[0])
             for f_idx in range(1, maks_czestotliwosci):
                 cechy[f'FFT_Składowa_{f_idx}'] = fft_amplitudy[f_idx, :]
@@ -355,8 +354,13 @@ if df is not None:
                 )
                 numery_grup = model_bgmm.fit_predict(dane_do_algorytmu) + 1
             
-        elif "Hierarchiczna" in metoda:
+        elif "metoda Warda" in metoda:
             powiazania = linkage(dane_do_algorytmu, method='ward')
+            numery_grup = fcluster(powiazania, t=liczba_grup, criterion='maxclust')
+
+        elif "Korelacyjna" in metoda:
+            # NOWOŚĆ: REALIZACJA MATEMATYCZNA ODLEGŁOŚCI KORELACYJNEJ (METODA ŚREDNICH)
+            powiazania = linkage(dane_do_algorytmu, method='average', metric='correlation')
             numery_grup = fcluster(powiazania, t=liczba_grup, criterion='maxclust')
             
         elif "HDBSCAN" in metoda:
@@ -555,9 +559,15 @@ if df is not None:
             cmap = plt.get_cmap('tab10')
             
             if "Hierarchiczna" in metoda:
-                powiazania_tree = linkage(dane_do_algorytmu, method='ward')
+                # Dynamiczny wybór konfiguracji dendrogramu w zależności od wybranej metody
+                if "metoda Warda" in metoda:
+                    powiazania_tree = linkage(dane_do_algorytmu, method='ward')
+                    ax.set_title("Dendrogram (Metoda Warda - Odległość Euklidesowa)")
+                else:
+                    powiazania_tree = linkage(dane_do_algorytmu, method='average', metric='correlation')
+                    ax.set_title("Dendrogram (Metoda Średnich - Odległość Korelacyjna)")
+                    
                 dendrogram(powiazania_tree, labels=nazwy_krzywych, leaf_rotation=90, leaf_font_size=9, ax=ax)
-                ax.set_title("Drzewo Podobieństwa (Dendrogram)")
             else:
                 for i, kolumna in enumerate(krzywe.columns):
                     g = numery_grup[i]
@@ -565,7 +575,7 @@ if df is not None:
                         ax.plot(x, krzywe[kolumna], color='gray', linestyle=':', alpha=0.4, linewidth=1)
                     else:
                         ax.plot(x, krzywe[kolumna], color=cmap((g - 1) % 10), alpha=0.6, linewidth=1)
-                ax.set_title(f"Metoda: {metoda}")
+                ax.set_title(f"Metoda: {metoda} | Przygotowanie: {optymalizacja}")
                 ax.grid(True, linestyle='--', alpha=0.5)
                 
             st.pyplot(fig)
