@@ -35,13 +35,13 @@ OPISY_METOD = {
     "PSO (Optymalizacja Rojem Cząstek)": "Metaheurystyka inspirowana naturą, imitująca zachowanie stada ptaków. Zamiast pojedynczego punktu startowego, w wielowymiarowej przestrzeni porusza się populacja (rój) cząstek-zwiadowców. Każda cząstka koryguje swój tor lotu na podstawie własnych doświadczeń oraz sukcesów całego roju, co pozwala skutecznie omijać lokalne minima matematyczne.",
     "NMF (Nieujemna Faktoryzacja Macierzy)": "Algorytm nieliniowej redukcji wymiarowości, który rozkłada macierz danych na iloczyn dwóch macierzy o elementach wyłącznie nieujemnych. Traktuje Twoje krzywe jako kombinację liniową bazowych, nieujemnych 'klocków' sygnałowych. Przypisanie do grupy następuje na podstawie dominującego komponentu fizycznego, co eliminuje nienaturalne matematycznie wartości ujemne.",
     "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich. Zakłada, że struktura danych pod wejściem składa się z określonej liczby wielowymiarowych rozkładów normalnych. Realizuje tzw. 'miękkie przypisanie' (soft clustering) – zamiast suchej decyzji 0/1, wylicza procentową pewność (prawdopodobieństwo), z jaką dana krzywa pasuje do każdego z klastrów. Idealne do identyfikacji próbek granicznych.",
-    "BGMM (Bayesowski GMM)": "Rozszerzenie GMM o probabilistykę Bayesowską z procesem Dirichleta. Traktuje parametry klastrów jako zmiennes losowe. Posiada unikalną inżynierską zaletę: jeśli zadana maksymalna liczba grup jest zbyt duża, algorytm automatycznie wygasza niepotrzebne klastry (przypisuje im wagę bliską zeru), chroniąc model przed przeuczeniem na małych zbiorach danych.",
+    "BGMM (Bayesowski GMM)": "Rozszerzenie GMM o probabilistykę Bayesowską z procesem Dirichleta. Traktuje parametry klastrów jako zmienne losowe. Posiada unikalną inżynierską zaletę: jeśli zadana maksymalna liczba grup jest zbyt duża, algorytm automatycznie wygasza niepotrzebne klastry (przypisuje im wagę bliską zeru), chroniąc model przed przeuczeniem na małych zbiorach danych.",
     "Hierarchiczna Aglomeracyjna (metoda Warda)": "Algorytm budujący drzewo powiązań od dołu do góry. Każda krzywa startuje jako osobny klaster, a w kolejnych krokach łączone są grupy, które generują najmniejszy możliwy wzrost całkowitej wariancji wewnątrzklastrowej (błędu SSE). Wynik końcowy w postaci dendrogramu pozwala na pełną ocenę struktury pokrewieństwa sygnałów.",
     "Hierarchiczna Korelacyjna (metoda średnich)": "Podejście hierarchiczne (UPGMA), które zamiast klasycznej odległości przestrzennej (metryki Euklidesowej) mierzy stopień współliniowości wykresów za pomocą odległości korelacyjnej (1 - r Pearsona). Łączy grupy na podstawie średnich powiązań, skupiając się wyłącznie na synchroniczności trendów i kształcie fali, ignorując skalę i przesunięcia pionowe Y.",
     "HDBSCAN (Gęstościowa - Auto K)": "Zaawansowane klastrowanie gęstościowe oparte na teorii grafów. Szuka obszarów o wysokiej kondensacji punktów oddzielonych strefami pustki. Nie wymaga definiowania liczby klastrów (K). Krzywe nietypowe lub zaszumione są automatycznie odrzucane i oznaczane jako grupa 0, dzięki czemu nie zaburzają one czystości głównych profili.",
     "Spectral Clustering": "Wykorzystuje wartości własne (widmo) macierzy podobieństwa danych do redukcji wymiarowości przed właściwym podziałem. Buduje graf powiązań między wszystkimi krzywymi i szuka optymalnych cięć topologicznych tego grafu. Genialnie radzi sobie z układami nieliniowymi i strukturami zagnieżdżonymi wewnątrz siebie.",
     "K-Shape (Kształt fali)": "Wyspecjalizowany algorytm stworzony ściśle do analizy kształtu serii czasowych. Wykorzystuje znormalizowaną korelację wzajemną (cross-correlation) jako miarę odległości geometrycznej. Potrafi rozpoznać, że dwie linie mają ten sam kształt, nawet jeśli ich piki charakterystyczne są przesunięte w czasie (w lewo lub w prawo).",
-    "DEC (Głębokie Uczenie - Sieć Neuronowa)": "Sztuczna sieć neuronowa (Autoenkoder) uczy się nieliniowej kompresji danych do małej przestrzeni ukrytej (latent space), jednocześnie optymalizując centra klastrów poprzez minimalizację dywergencji Kullbacka-Leiblera (KL). Process ten odrzuca skomplikowany, nieliniowy szum laboratoryjny.",
+    "DEC (Głębokie Uczenie - Sieć Neuronowa)": "Sztuczna sieć neuronowa (Autoenkoder) uczy się nieliniowej kompresji danych do małej przestrzeni ukrytej (latent space), jednocześnie optymalizując centra klastrów poprzez minimalizację dywergencji Kullbacka-Leiblera (KL). Proces ten odrzuca skomplikowany, nieliniowy szum laboratoryjny.",
     "ADEC (Adwersarialne Głębokie Uczenie)": "Rozbudowanie sieci DEC o trening adwersarialny (koncepcja GAN). Dodatkowy blok Dyskryminatora walczy z Enkoderem, zmuszając go do ułożenia cech krzywych w idealnie gładki rozkład matematyczny. Eliminuje to puste przestrzenie w strukturze danych, generując niezwykle zwarte klastry o ostrych granicach.",
     "RDEC (Regularizowane Głębokie Uczenie)": "Model DEC wyposażony w silne bariery regularyzacyjne (L2 oraz weight decay). Nakłada matematyczną karę za zbyt skomplikowane wagi sieci oraz zbyt wysokie rozproszenie przestrzeni ukrytej. Zmusza to sieć neuronową do szukania najprostszych, najbardziej fundamentalnych trendów geometrycznych fali, chroniąc przed przeuczeniem.",
     "ADClust (Automatyczne Głębokie Uczenie)": "Autonomiczny kombajn AI. Głęboki Autoenkoder kompresuje sygnał do przestrzeni cech ukrytych, a zaimplementowany wewnątrz pętli uczącej moduł statystyczny skanuje przestrzeń indeksem Silhouette, samodzielnie zatwierdzając matematycznie najlepszą liczbę klastrów bez ingerencji inżyniera."
@@ -335,7 +335,7 @@ if df is not None:
             dane_do_algorytmu = scaler.fit_transform(krzywe_T)
             
         # =================================================================
-        # KLASTERYZACJA ALGORYTMAMI
+        # KLASTERYZACJA ALGORYTMAMI - NAPRAWIONE WARUNKI STR-MATCHING
         # =================================================================
         if metoda == "K-means":
             model = KMeans(n_clusters=liczba_grup, random_state=42, n_init=10)
@@ -358,7 +358,8 @@ if df is not None:
                 W = model_nmf.fit_transform(dane_nmf)
                 numery_grup = np.argmax(W, axis=1) + 1
             
-        elif metoda == "GMM":
+        elif "GMM (Probabilistyczna)" in metoda:
+            # FIX: Precyzyjne dopasowanie pełnej nazwy usunęło błąd 'numery_grup' is not defined
             model = GaussianMixture(n_components=liczba_grup, random_state=42, n_init=5)
             numery_grup = model.fit_predict(dane_do_algorytmu) + 1
 
@@ -547,12 +548,12 @@ if df is not None:
         }).sort_values(by='Numer Grupy')
         
         # =================================================================
-        # REWOLUCJA: ROZBUDOWANY SYSTEM PODPOWIEDZI (ZAKŁADKI TABS)
+        # ROZBUDOWANY SYSTEM PODPOWIEDZI (ZAKŁADKI TABS) + NOWY ALGORYTM KNEEDLE
         # =================================================================
         if "HDBSCAN" not in metoda and "ADClust" not in metoda:
             with st.expander("🔍 Zaawansowana Podpowiedź Matematyczna (Dobór liczby klastrów K)", expanded=False):
                 tab_elbow, tab_silhouette, tab_bic = st.tabs([
-                    "📐 Metoda Łokcia (Inercja)", 
+                    "📐 Metoda Łokcia & Kneedle", 
                     "👤 Silhouette Score (Spójność)", 
                     "🔮 Indeks BIC (Kryterium Bayesowskie)"
                 ])
@@ -560,19 +561,38 @@ if df is not None:
                 zakres_k = range(2, 11)
                 
                 with tab_elbow:
-                    st.write("📈 **Zasada interpretacji:** Szukamy wyraźnego załamania wykresu ('łokcia'), po którym spadek inercji traci na dynamice.")
+                    st.write("📈 **Zasada interpretacji:** Szukamy wyraźnego załamania wykresu ('łokcia'). Fioletowa przerywana linia reprezentuje automatyczny wybór algorytmu Kneedle.")
                     inercja = []
                     for k in zakres_k:
                         km = KMeans(n_clusters=k, random_state=42, n_init=5)
                         km.fit(dane_do_algorytmu)
                         inercja.append(km.inertia_)
                     
+                    # NOWOŚĆ: IMPLEMENTACJA ALGORYTMU KNEEDLE (KNEE POINT DETECTION)
+                    p1 = np.array([zakres_k[0], inercja[0]])
+                    p2 = np.array([zakres_k[-1], inercja[-1]])
+                    wektor_linii = p2 - p1
+                    norma_linii = np.linalg.norm(wektor_linii)
+                    
+                    maks_odleglosc = -1
+                    kneedle_k = zakres_k[0]
+                    for i, k in enumerate(zakres_k):
+                        p = np.array([k, inercja[i]])
+                        odleglosc = np.abs(np.cross(p2 - p1, p1 - p)) / norma_linii
+                        if odleglosc > maks_odleglosc:
+                            maks_odleglosc = odleglosc
+                            kneedle_k = k
+                    
+                    st.info(f"✨ **Algorytm Kneedle:** Matematycznie wyznaczony, optymalny punkt załamania krzywej znajduje się dla **K = {kneedle_k}**.")
+                    
                     fig_elbow, ax_elbow = plt.subplots(figsize=(10, 3.2))
-                    ax_elbow.plot(zakres_k, inercja, 'ro-', linewidth=2)
+                    ax_elbow.plot(zakres_k, inercja, 'ro-', linewidth=2, label='Inercja (SSE)')
+                    ax_elbow.axvline(x=kneedle_k, color='purple', linestyle='--', linewidth=2, label=f'Kneedle (K={kneedle_k})')
                     ax_elbow.set_xlabel('Liczba klastrów (K)')
                     ax_elbow.set_ylabel('Inercja (SSE)')
                     ax_elbow.set_xticks(list(zakres_k))
                     ax_elbow.grid(True, linestyle='--', alpha=0.5)
+                    ax_elbow.legend()
                     st.pyplot(fig_elbow)
                     plt.close(fig_elbow)
                     
