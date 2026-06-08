@@ -3,7 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.cluster import KMeans, HDBSCAN, SpectralClustering
-from sklearn.mixture import GaussianMixture
+from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
 from sklearn.decomposition import NMF
 from sklearn.metrics import silhouette_score
 from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
@@ -34,9 +34,10 @@ OPISY_METOD = {
     "K-means": "Klasyczny algorytm geometryczny. Szuka środków ciężkości grup. Szybki, ale wrażliwy na szum i przesunięcia.",
     "PSO (Optymalizacja Rojem Cząstek)": "Algorytm heurystyczny oparty na naturze. Rój cząstek-zwiadowców szuka globalnego optimum, omijając lokalne pułapki.",
     "NMF (Nieujemna Faktoryzacja Macierzy)": "Rozkłada krzywe wyłącznie na czyste składowe dodatnie. Idealna do fizycznych sygnałów i danych laboratoryjnych.",
+    "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich. Podejście probabilistyczne – wylicza procentową pewność przypisania krzywej do danej grupy.",
+    "BGMM (Bayesowski GMM)": "Zaawansowany probabilistyczny model Bayesowski. Samodzielnie wygasza nadmiarowe klastry i jest ultra-odporny na małą liczbę próbek.",
     "Hierarchiczna Aglomeracyjna (metoda Warda)": "Buduje stabilne drzewo podobieństwa (dendrogram), minimalizując wariancję i błąd wewnątrz tworzonych klastrów.",
     "HDBSCAN (Gęstościowa - Auto K)": "Klastrowanie gęstościowe. Samo wykrywa optymalną liczbę grup i automatycznie odrzuca anomalie oraz szum (oznaczane jako Grupa 0).",
-    "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich. Podejście probabilistyczne – wylicza procentową pewność przypisania krzywej do danej grupy.",
     "Spectral Clustering": "Klastrowanie spektralne oparte na teorii grafów. Projektuje sieć powiązań, świetne do skomplikowanych, zagnieżdżonych struktur.",
     "K-Shape (Kształt fali)": "Stworzony do serii czasowych. Wykorzystuje korelację wzajemną – rozpoznaje kształt fali nawet przy przesunięciu piku w lewo lub prawo.",
     "DEC (Głębokie Uczenie - Sieć Neuronowa)": "Sztuczna sieć neuronowa (Autoenkoder) kompresuje krzywe do esencji matematycznej, skutecznie odcinając zaawansowany szum.",
@@ -110,7 +111,7 @@ class PSOClustering:
         return labels + 1
 
 # =================================================================
-# ARCHITEKTURY SIECI NEURONOWYCH (DEC, ADEC, RDEC)
+# ARCHITEKTURY SIECI NEURONOWYCH (DLA ENKODERÓW AI)
 # =================================================================
 if pytorch_dostepne:
     class AutoencoderKrzywych(nn.Module):
@@ -221,16 +222,15 @@ if df is not None:
         krzywe = df.iloc[:, 1:]
         nazwy_krzywych = krzywe.columns.tolist()
         
-        # Wstępne przygotowanie listy metod w celu poprawnego mapowania opisów
-        tymczasowa_metoda = st.radio("Wstępny krok mapowania", ["K-means"], label_visibility="collapsed") if 'dummy' in st.session_state else "K-means"
-        
+        # Rozbudowana lista metod o pozycję BGMM
         lista_metod = [
             "K-means", 
             "PSO (Optymalizacja Rojem Cząstek)",
             "NMF (Nieujemna Faktoryzacja Macierzy)",
+            "GMM (Probabilistyczna)", 
+            "BGMM (Bayesowski GMM - Nowość!)",
             "Hierarchiczna Aglomeracyjna (metoda Warda)", 
             "HDBSCAN (Gęstościowa - Auto K)", 
-            "GMM (Probabilistyczna)", 
             "Spectral Clustering"
         ]
         if tslearn_dostepne:
@@ -241,18 +241,16 @@ if df is not None:
             lista_metod.append("RDEC (Regularizowane Głębokie Uczenie)")
             lista_metod.append("ADClust (Automatyczne Głębokie Uczenie)")
             
-        # Tworzymy niewidoczny stan sesji, aby pobrać aktualnie wybraną metodę przed renderowaniem nagłówka help
         if 'wybrana_metoda' not in st.session_state:
             st.session_state.wybrana_metoda = lista_metod[0]
 
         # Układ parametrów - 3 kolumny
         col_param1, col_param2, col_param3 = st.columns(3)
         with col_param1:
-            # NOWOŚĆ: help=OPISY_METOD[...] tworzy automatyczny dymek pomocy obok nagłówka selectboxa!
             metoda = st.selectbox(
                 "Wybierz metodę główną:", 
                 lista_metod, 
-                index=lista_metod.index(st.session_state.wybrana_metoda),
+                index=lista_metod.index(st.session_state.wybrana_metoda) if st.session_state.wybrana_metoda in lista_metod else 0,
                 help=OPISY_METOD.get(st.session_state.wybrana_metoda, "")
             )
             st.session_state.wybrana_metoda = metoda
@@ -260,7 +258,7 @@ if df is not None:
         with col_param2:
             if "K-Shape" not in metoda and "DEC" not in metoda and "RDEC" not in metoda and "ADClust" not in metoda and "NMF" not in metoda:
                 optymalizacja = st.selectbox(
-                    "Wybierz wstępne przygotowanie danych:", 
+                    "Wybierz wstępne祈ygotowanie danych:", 
                     ["Standardowa", "Analiza trendu", "FeatureExtraction", "MinMaxScaler", "Filtrowanie szumów"]
                 )
             else:
@@ -273,9 +271,10 @@ if df is not None:
             elif "ADClust" in metoda:
                 st.text_input("Liczba grup (K):", value="Automatycznie przez AI 🤖", disabled=True)
             else:
-                liczba_grup = st.slider("Wybierz oczekiwaną liczbę grup (K):", min_value=2, max_value=10, value=4)
+                # Dla BGMM liczba grup stanowi górną granicę matematyczną (Prior limit)
+                label_k = "Maksymalna liczba grup (K):" if "BGMM" in metoda else "Wybierz oczekiwaną liczbę grup (K):"
+                liczba_grup = st.slider(label_k, min_value=2, max_value=10, value=5)
 
-        # NOWOŚĆ: Wyświetlanie opisu otwartym tekstem tuż pod parametrami (doskonałe na smartfony!)
         st.markdown(f"💡 **O metodzie:** *{OPISY_METOD.get(metoda, '')}*")
 
         # =================================================================
@@ -330,6 +329,22 @@ if df is not None:
                 W = model_nmf.fit_transform(dane_nmf)
                 numery_grup = np.argmax(W, axis=1) + 1
             
+        elif metoda == "GMM":
+            model = GaussianMixture(n_components=liczba_grup, random_state=42, n_init=5)
+            numery_grup = model.fit_predict(dane_do_algorytmu) + 1
+
+        elif "BGMM" in metoda:
+            # NOWOŚĆ: IMPLEMENTACJA BAYESOWSKIEGO GMM Z REGULARYZACJĄ DIAG
+            with st.spinner("🔮 Trwa wnioskowanie bayesowskie (BGMM)..."):
+                model_bgmm = BayesianGaussianMixture(
+                    n_components=liczba_grup, 
+                    covariance_type='diag', 
+                    weight_concentration_prior=1e-3, 
+                    random_state=42, 
+                    n_init=5
+                )
+                numery_grup = model_bgmm.fit_predict(dane_do_algorytmu) + 1
+            
         elif "Hierarchiczna" in metoda:
             powiazania = linkage(dane_do_algorytmu, method='ward')
             numery_grup = fcluster(powiazania, t=liczba_grup, criterion='maxclust')
@@ -338,10 +353,6 @@ if df is not None:
             model = HDBSCAN(min_cluster_size=min_wielkosc, min_samples=1)
             klastry_raw = model.fit_predict(dane_do_algorytmu)
             numery_grup = [n + 1 if n >= 0 else 0 for n in klastry_raw]
-            
-        elif "GMM" in metoda:
-            model = GaussianMixture(n_components=liczba_grup, random_state=42, n_init=5)
-            numery_grup = model.fit_predict(dane_do_algorytmu) + 1
             
         elif "Spectral" in metoda:
             model = SpectralClustering(n_clusters=liczba_grup, random_state=42, assign_labels='discretize')
@@ -503,7 +514,9 @@ if df is not None:
             'Numer Grupy': numery_grup
         }).sort_values(by='Numer Grupy')
         
-        # Sekcja: METODA ŁOKCIA (Zawsze dostępna dla manualnego K)
+        # =================================================================
+        # PANEL PODPOWIEDZI MATEMATYCZNEH (Dostępny dla wszystkich manualnych K)
+        # =================================================================
         if "HDBSCAN" not in metoda and "ADClust" not in metoda:
             with st.expander("🔍 Podpowiedź matematyczna (Metoda Łokcia)"):
                 st.write("Poniższy wykres inercji pomaga dobrać optymalną liczbę grup (K) dla aktualnie przygotowanych danych pomiarowych.")
