@@ -40,7 +40,7 @@ OPISY_METOD = {
     "Hierarchiczna Korelacyjna (metoda średnich)": "Podejście hierarchiczne (UPGMA), które zamiast klasycznej odległości przestrzennej (metryki Euklidesowej) mierzy stopień współliniowości wykresów za pomocą odległości korelacyjnej (1 - r Pearsona). Łączy grupy na podstawie średnich powiązań, skupiając się wyłącznie na synchroniczności trendów i kształcie fali, ignorując skalę i przesunięcia pionowe Y.",
     "HDBSCAN (Gęstościowa - Auto K)": "Zaawansowane klastrowanie gęstościowe oparte na teorii grafów. Szuka obszarów o wysokiej kondensacji punktów oddzielonych strefami pustki. Nie wymaga definiowania liczby klastrów (K). Krzywe nietypowe lub zaszumione są automatycznie odrzucane i oznaczane jako grupa 0, dzięki czemu nie zaburzają one czystości głównych profili.",
     "Spectral Clustering": "Wykorzystuje wartości własne (widmo) macierzy podobieństwa danych do redukcji wymiarowości przed właściwym podziałem. Buduje graf powiązań między wszystkimi krzywymi i szuka optymalnych cięć topologicznych tego grafu. Genialnie radzi sobie z układami nieliniowymi i strukturami zagnieżdżonymi wewnątrz siebie.",
-    "K-Shape (Kształt fali)": "Wyspecjalizowany algorytm stworzony ściśle do analizy kształtu serii czasowych. Wykorzystuje znormalizowaną korelację wzajemną (cross-correlation) jako miarę odległości geometrycznej. Potrafi rozpoznać, że dwie linie mają ten sam kształt, nawet jeśli ich piki charakterystyczne są przesunięte w czasie (w lewo lub w prawo).",
+    "K-Shape (Kształt fali)": "Wyspecjalizowany algorytm stworzony ściśle do analizy kształtu serii czasowych. Wykorzystuje znormalizowaną korelację wzajemną (cross-correlation) jako miarę odległości geometrycznej. Potrafi rozpoznać, że dwie linie spiralne mają ten sam kształt, nawet jeśli ich piki charakterystyczne są przesunięte w czasie (w lewo lub w prawo).",
     "DEC (Głębokie Uczenie - Sieć Neuronowa)": "Sztuczna sieć neuronowa (Autoenkoder) uczy się nieliniowej kompresji danych do małej przestrzeni ukrytej (latent space), jednocześnie optymalizując centra klastrów poprzez minimalizację dywergencji Kullbacka-Leiblera (KL). Proces ten odrzuca skomplikowany, nieliniowy szum laboratoryjny.",
     "ADEC (Adwersarialne Głębokie Uczenie)": "Rozbudowanie sieci DEC o trening adwersarialny (koncepcja GAN). Dodatkowy blok Dyskryminatora walczy z Enkoderem, zmuszając go do ułożenia cech krzywych w idealnie gładki rozkład matematyczny. Eliminuje to puste przestrzenie w strukturze danych, generując niezwykle zwarte klastry o ostrych granicach.",
     "RDEC (Regularizowane Głębokie Uczenie)": "Model DEC wyposażony w silne bariery regularyzacyjne (L2 oraz weight decay). Nakłada matematyczną karę za zbyt skomplikowane wagi sieci oraz zbyt wysokie rozproszenie przestrzeni ukrytej. Zmusza to sieć neuronową do szukania najprostszych, najbardziej fundamentalnych trendów geometrycznych fali, chroniąc przed przeuczeniem.",
@@ -53,7 +53,7 @@ OPISY_METOD = {
 OPISY_PREPROCESSING = {
     "Standardowa": "Polega na klasycznej standaryzacji (Z-score). Od każdej wartości punktu odejmowana jest średnia danej kolumny, a wynik dzielony jest przez jej odchylenie standardowe. Sprowadza to wszystkie punkty pomiarowe krzywych do wspólnej skali statystycznej (średnia=0, odchylenie=1), eliminując sytuację, w której bezwzględna wartość sygnału dominuje nad jego dynamiką.",
     "Analiza trendu": "Wyznacza różnice skończone (pochodne pierwszego rzędu) pomiędzy sąsiednimi punktami wzdłuż osi X (`y_next - y_current`), a następnie poddaje je standaryzacji. Transformacja ta przenosi analizę w obszar czystej dynamiki linii. Algorytmy badają prędkość narastania i opadania sygnału (nachylenie zboczy), całkowicie ignorując pozycję wykresów w pionie.",
-    "FeatureExtraction": "Głęboka transformacja inżynierska. Zamiast surowych setek punktów, każda krzywa opisywana jest przez 9 zaawansowanych deskryptorów: wartość maksymalną, pozycję piku X, średnią, odchylenie standardowe, skośność (asymetrię fali), kurtozę (strzelistość pików) oraz amplitudy pierwszych 3 głównych składowych harmonicznych uzyskanych z Szybkiej Transformaty Fouriera (FFT). Pozwala algorytmom badać sygnał w dziedzinie częstotliwości.",
+    "FeatureExtraction": "Głęboka transformacja inżynierska. Zamiast surowych setek punktów, każda krzywa opisywana jest przez 9 zaawansowanych deskryptorów: wartość maksymalną, pozycję piku X, średnią, odchylenie standardowe, skośność (asymetrię fali), kurtoza (strzelistość pików) oraz amplitudy pierwszych 3 głównych składowych harmonicznych uzyskanych z Szybkiej Transformaty Fouriera (FFT). Pozwala algorytmom badać sygnał w dziedzinie częstotliwości.",
     "MinMaxScaler": "Dokonuje liniowej transformacji danych, przesuwając i skalując wartości każdej krzywej tak, aby zamknęły się w ścisłym, znormalizowanym przedziale od 0 do 1. Metoda ta zachowuje oryginalne proporcje amplitud i jest bezwzględnie wymagana przez algorytmy takie jak NMF, które matematycznie nie tolerują wartości ujemnych.",
     "Filtrowanie szumów": "Wykorzystuje algorytm kroczącego okna średniej (`rolling window`) o zadanym rozmiarze, centrując wynik. Każdy punkt wykresu zastępowany jest średnią arytmetyczną z jego bezpośredniego otoczenia. Operacja ta skutecznie odcina fluktuacje wysokiej częstotliwości, przypadkowe szpilki pomiarowe i zakłócenia aparatury, wygładzając nadrzędny profil fali."
 }
@@ -234,7 +234,7 @@ if df is not None:
         krzywe = df.iloc[:, 1:]
         nazwy_krzywych = krzywe.columns.tolist()
         
-        # Słownik metod głównych
+        # Dynamiczne budowanie stabilnej listy metod
         lista_metod = [
             "K-means", 
             "PSO (Optymalizacja Rojem Cząstek)",
@@ -254,19 +254,20 @@ if df is not None:
             lista_metod.append("RDEC (Regularizowane Głębokie Uczenie)")
             lista_metod.append("ADClust (Automatyczne Głębokie Uczenie)")
             
+        # Inicjalizacja bezpiecznej metody domyślnej w sesji
         if 'wybrana_metoda' not in st.session_state:
             st.session_state.wybrana_metoda = lista_metod[0]
 
         # Układ parametrów - 3 kolumny
         col_param1, col_param2, col_param3 = st.columns(3)
         with col_param1:
+            # FIX: key="wybrana_metoda" wiąże zmienną bezpośrednio ze stanem chmury i eliminuje 1-krokowy lag dymka
             metoda = st.selectbox(
                 "Wybierz metodę główną:", 
                 lista_metod, 
-                index=lista_metod.index(st.session_state.wybrana_metoda) if st.session_state.wybrana_metoda in lista_metod else 0,
+                key="wybrana_metoda",
                 help=OPISY_METOD.get(st.session_state.wybrana_metoda, "")
             )
-            st.session_state.wybrana_metoda = metoda
         
         with col_param2:
             if "K-Shape" not in metoda and "DEC" not in metoda and "RDEC" not in metoda and "ADClust" not in metoda and "NMF" not in metoda:
@@ -288,14 +289,13 @@ if df is not None:
                 liczba_grup = st.slider(label_k, min_value=2, max_value=10, value=5)
 
         # =================================================================
-        # REWOLUCJA: ROZBUDOWANY, DYNAMICZNY PANEL METODOLOGICZNY (DWIE KOLUMNY)
+        # ROZBUDOWANY PANEL METODOLOGICZNY (DWIE KOLUMNY) - TERAZ IDEALNIE ZSYNCHRONIZOWANY
         # =================================================================
         with st.expander("📚 Kompleksowy Opis Metodologiczny (Teoria & Synergia Operacyjna)", expanded=True):
             col_desc1, col_desc2 = st.columns(2)
             with col_desc1:
                 st.markdown(f"#### 🤖 Algorytm Główny: `{metoda}`")
                 st.write(OPISY_METOD.get(metoda, ""))
-                # Dynamiczny opis synergii z uwzględnieniem wybranej obróbki danych
                 st.markdown(f"**Kontekst operacyjny:** Wybranie obróbki *'{optymalizacja}'* sprawia, że algorytm `{metoda.split()[0]}` nie analizuje surowego sygnału Excela bezpośrednio w punktach, lecz przetwarza macierz matematyczną ustrukturyzowaną ściśle pod kątem specyfiki tego filtra. Zwiększa to stabilność grupowania i odporność na fluktuacje.")
             with col_desc2:
                 st.markdown(f"#### ⚙️ Obróbka Wstępna: `{optymalizacja}`")
@@ -575,63 +575,4 @@ if df is not None:
         
         with col_wykres:
             st.subheader("📈 Wykres")
-            fig, ax = plt.subplots(figsize=(10, 5))
-            cmap = plt.get_cmap('tab10')
-            
-            if "Hierarchiczna" in metoda:
-                if "metoda Warda" in metoda:
-                    powiazania_tree = linkage(dane_do_algorytmu, method='ward')
-                    ax.set_title("Dendrogram (Metoda Warda - Odległość Euklidesowa)")
-                else:
-                    powiazania_tree = linkage(dane_do_algorytmu, method='average', metric='correlation')
-                    ax.set_title("Dendrogram (Metoda Średnich - Odległość Korelacyjna)")
-                    
-                dendrogram(powiazania_tree, labels=nazwy_krzywych, leaf_rotation=90, leaf_font_size=9, ax=ax)
-            else:
-                for i, kolumna in enumerate(krzywe.columns):
-                    g = numery_grup[i]
-                    if g == 0:
-                        ax.plot(x, krzywe[kolumna], color='gray', linestyle=':', alpha=0.4, linewidth=1)
-                    else:
-                        ax.plot(x, krzywe[kolumna], color=cmap((g - 1) % 10), alpha=0.6, linewidth=1)
-                ax.set_title(f"Metoda: {metoda} | Przygotowanie: {optymalizacja}")
-                ax.grid(True, linestyle='--', alpha=0.5)
-                
-            st.pyplot(fig)
-            plt.close(fig)
-            
-        with col_tabela:
-            st.subheader("📋 Grupy")
-            st.dataframe(wyniki, use_container_width=True, hide_index=True, height=300)
-            
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                wyniki.to_excel(writer, index=False)
-            
-            st.download_button(
-                label="📥 Pobierz Excel",
-                data=buffer.getvalue(),
-                file_name=f"wyniki_{metoda.lower().split()[0]}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-
-        # Raport tekstowy
-        st.write("---")
-        st.subheader("📝 Podsumowanie tekstowe grup")
-        unikalne_grupy = sorted(wyniki['Numer Grupy'].unique())
-        
-        for g in unikalne_grupy:
-            krzywe_w_grupie = wyniki[wyniki['Numer Grupy'] == g]['Krzywa'].tolist()
-            lista_str = ", ".join(krzywe_w_grupie)
-            
-            if g == 0:
-                st.markdown(f"🔴 **Szum / Anomalie pomiarowe** ({len(krzywe_w_grupie)} krzywych):")
-            else:
-                st.markdown(f"🟢 **Grupa {g}** ({len(krzywe_w_grupie)} krzywych):")
-            st.code(lista_str, language="")
-            
-    except Exception as ogolny_blad:
-        st.error(f"Problem z przetworzeniem danych: {ogolny_blad}")
-else:
-    st.info("💡 Aby rozpocząć, wgraj plik z dysku lub wklej link do Google Sheets powyżej.")
+            fig, ax = plt.subplots(figsize=(10,
