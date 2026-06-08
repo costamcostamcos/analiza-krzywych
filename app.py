@@ -31,11 +31,11 @@ except ImportError:
 # SŁOWNIK INTELIGENTNYCH OPISÓW METOD KLASTERYZACJI
 # =================================================================
 OPISY_METOD = {
-    "K-means": "Dzieli przestrzeń cech na tzw. obszary Voronoia. Algorytm dąży to minimalizacji wariancji wewnątrzklastrowej poprzez naprzemienne przypisywanie obiektów do najbliższych prototypów (środków ciężkości) i aktualizację tych środków. Najlepiej sprawdza się, gdy klastry są zwarte, odizolowane i sferyczne.",
+    "K-means": "Dzieli przestrzeń cech na tzw. obszary Voronoia. Algorytm dąży do minimalizacji wariancji wewnątrzklastrowej poprzez naprzemienne przypisywanie obiektów do najbliższych prototypów (środków ciężkości) i aktualizację tych środków. Najlepiej sprawdza się, gdy klastry są zwarte, odizolowane i sferyczne.",
     "PSO (Optymalizacja Rojem Cząstek)": "Metaheurystyka inspirowana naturą, imitująca zachowanie stada ptaków. Zamiast pojedynczego punktu startowego, w wielowymiarowej przestrzeni porusza się populacja (rój) cząstek-zwiadowców. Każda cząstka koryguje swój tor lotu na podstawie własnych doświadczeń oraz sukcesów całego roju, co pozwala skutecznie omijać lokalne minima matematyczne.",
     "NMF (Nieujemna Faktoryzacja Macierzy)": "Algorytm nieliniowej redukcji wymiarowości, który rozkłada macierz danych na iloczyn dwóch macierzy o elementach wyłącznie nieujemnych. Traktuje Twoje krzywe jako kombinację liniową bazowych, nieujemnych 'klocków' sygnałowych. Przypisanie do grupy następuje na podstawie dominującego komponentu fizycznego, co eliminuje nienaturalne matematycznie wartości ujemne.",
     "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich. Zakłada, że struktura danych pod wejściem składa się z określonej liczby wielowymiarowych rozkładów normalnych. Realizuje tzw. 'miękkie przypisanie' (soft clustering) – zamiast suchej decyzji 0/1, wylicza procentową pewność (prawdopodobieństwo), z jaką dana krzywa pasuje do każdego z klastrów. Idealne do identyfikacji próbek granicznych.",
-    "BGMM (Bayesowski GMM)": "Rozszerzenie GMM o probabilistykę Bayesowską z procesem Dirichleta. Traktuje parametry klastrów jako zmienne losowe. Posiada unikalną inżynierską zaletę: jeśli zadana maksymalna liczba grup jest zbyt duża, algorytm automatycznie wygasza niepotrzebne klastry (przypisuje im wagę bliską zeru), chroniąc model przed przeuczeniem na małych zbiorach danych.",
+    "BGMM (Bayesowski GMM)": "Rozszerzenie GMM o probabilistyczna Bayesowską z procesem Dirichleta. Traktuje parametry klastrów jako zmienne losowe. Posiada unikalną inżynierską zaletę: jeśli zadana maksymalna liczba grup jest zbyt duża, algorytm automatycznie wygasza niepotrzebne klastry (przypisuje im wagę bliską zeru), chroniąc model przed przeuczeniem na małych zbiorach danych.",
     "Hierarchiczna Aglomeracyjna (metoda Warda)": "Algorytm budujący drzewo powiązań od dołu do góry. Każda krzywa startuje jako osobny klaster, a w kolejnych krokach łączone są grupy, które generują najmniejszy możliwy wzrost całkowitej wariancji wewnątrzklastrowej (błędu SSE). Wynik końcowy w postaci dendrogramu pozwala na pełną ocenę struktury pokrewieństwa sygnałów.",
     "Hierarchiczna Korelacyjna (metoda średnich)": "Podejście hierarchiczne (UPGMA), które zamiast klasycznej odległości przestrzennej (metryki Euklidesowej) mierzy stopień współliniowości wykresów za pomocą odległości korelacyjnej (1 - r Pearsona). Łączy grupy na podstawie średnich powiązań, skupiając się wyłącznie na synchroniczności trendów i kształcie fali, ignorując skalę i przesunięcia pionowe Y.",
     "HDBSCAN (Gęstościowa - Auto K)": "Zaawansowane klastrowanie gęstościowe oparte na teorii grafów. Szuka obszarów o wysokiej kondensacji punktów oddzielonych strefami pustki. Nie wymaga definiowania liczby klastrów (K). Krzywe nietypowe lub zaszumione są automatycznie odrzucane i oznaczane jako grupa 0, dzięki czemu nie zaburzają one czystości głównych profili.",
@@ -560,7 +560,6 @@ if df is not None:
                 
                 zakres_k = range(2, 11)
                 
-                # Jedna wspólna pętla obliczeniowa dla optymalizacji wydajności aplikacji
                 inercja = []
                 sylwetki = []
                 bic_values = []
@@ -627,8 +626,9 @@ if df is not None:
                     plt.close(fig_bic)
 
                 with tab_gap:
-                    st.write("📈 **Zasada interpretacji:** Szukamy **globalnego maksimum** (najwyższego punktu) wykresu Gap. Wartość ta reprezentuje moment, w którym podział Twoich prawdziwych krzywych najsilniej odbiega od rozkładu całkowicie losowego szumu.")
-                    with st.spinner("Trwa obliczanie Statystyki Przerwy (Gap Statistic)..."):
+                    # REWOLUCJA WIZUALNA: Dynamiczne obliczanie i zaawansowany dwupanelowy wykres statystyki Gap
+                    st.write("📈 **Zasada interpretacji:** Szukamy pierwszego lokalnego maksimum lub najmniejszego $K$, dla którego zachodzi reguła Tibshiraniego: $Gap(k) \ge Gap(k+1) - s_{k+1}$ (oznaczone fioletową linią pionową).")
+                    with st.spinner("Trwa zaawansowane generowanie szumu referencyjnego dla Statystyki Przerwy..."):
                         B = 5
                         shape = dane_do_algorytmu.shape
                         min_vals = dane_do_algorytmu.min(axis=0)
@@ -649,15 +649,40 @@ if df is not None:
                         sk = sdk * np.sqrt(1 + 1.0 / B)
                         gaps = mean_log_Wk_ref - log_Wk
                         
-                        fig_gap, ax_gap = plt.subplots(figsize=(10, 3.2))
-                        ax_gap.errorbar(zakres_k, gaps, yerr=sk, fmt='mo-', linewidth=2, capsize=4, label='Wartość Gap')
-                        ax_gap.set_xlabel('Liczba klastrów (K)')
-                        ax_gap.set_ylabel('Statystyka Gap')
-                        ax_gap.set_xticks(list(zakres_k))
-                        ax_gap.grid(True, linestyle='--', alpha=0.5)
-                        ax_gap.legend()
-                        st.pyplot(fig_gap)
-                        plt.close(fig_gap)
+                        # Implementacja automatycznej reguły wyboru K według Roberta Tibshiraniego
+                        optimal_k_gap = zakres_k[-1]  # Wartość domyślna (ostatnia)
+                        for idx in range(len(zakres_k) - 1):
+                            if gaps[idx] >= gaps[idx+1] - sk[idx+1]:
+                                optimal_k_gap = zakres_k[idx]
+                                break
+                        
+                        st.success(f"✨ **Reguła Tibshiraniego (Gap):** Optymalna strukturalnie liczba grup dla Twoich danych to **K = {optimal_k_gap}**.")
+                        
+                        # Generowanie czytelnego, dwupanelowego wykresu inżynierskiego
+                        fig_gap_dual, (ax_g1, ax_g2) = plt.subplots(1, 2, figsize=(11, 3.5))
+                        
+                        # Wykres 1: Składowe (Wgląd w to, jak dane rzeczywiste odklejają się od losowego szumu)
+                        ax_g1.plot(zakres_k, mean_log_Wk_ref, 'co-', label='Szum referencyjny $E\{\log(W_k)\}$')
+                        ax_g1.plot(zakres_k, log_Wk, 'yo-', label='Twoje dane $\log(W_k)$')
+                        ax_g1.set_xlabel('Liczba klastrów (K)')
+                        ax_g1.set_ylabel('Logarytm Inercji ($\log W_k$)')
+                        ax_g1.set_xticks(list(zakres_k))
+                        ax_g1.grid(True, linestyle='--', alpha=0.5)
+                        ax_g1.legend(fontsize=9)
+                        ax_g1.set_title("Wgląd w składowe inercji", fontsize=10)
+                        
+                        # Wykres 2: Czysta wartość Gap z automatyczną linią rekomendacji AI
+                        ax_g2.errorbar(zakres_k, gaps, yerr=sk, fmt='mo-', linewidth=2, capsize=4, label='Wartość Gap')
+                        ax_g2.axvline(x=optimal_k_gap, color='purple', linestyle='--', linewidth=2, label=f'Rekomendacja (K={optimal_k_gap})')
+                        ax_g2.set_xlabel('Liczba klastrów (K)')
+                        ax_g2.set_ylabel('Statystyka Gap')
+                        ax_g2.set_xticks(list(zakres_k))
+                        ax_g2.grid(True, linestyle='--', alpha=0.5)
+                        ax_g2.legend(fontsize=9)
+                        ax_g2.set_title("Czysta różnica (Gap)", fontsize=10)
+                        
+                        st.pyplot(fig_gap_dual)
+                        plt.close(fig_gap_dual)
 
         # Prezentacja graficzna wynikowa
         col_wykres, col_tabela = st.columns([3, 1])
