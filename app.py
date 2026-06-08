@@ -575,4 +575,63 @@ if df is not None:
         
         with col_wykres:
             st.subheader("📈 Wykres")
-            fig, ax = plt.subplots(figsize=(10,
+            fig, ax = plt.subplots(figsize=(10, 5))
+            cmap = plt.get_cmap('tab10')
+            
+            if "Hierarchiczna" in metoda:
+                if "metoda Warda" in metoda:
+                    powiazania_tree = linkage(dane_do_algorytmu, method='ward')
+                    ax.set_title("Dendrogram (Metoda Warda - Odległość Euklidesowa)")
+                else:
+                    powiazania_tree = linkage(dane_do_algorytmu, method='average', metric='correlation')
+                    ax.set_title("Dendrogram (Metoda Średnich - Odległość Korelacyjna)")
+                    
+                dendrogram(powiazania_tree, labels=nazwy_krzywych, leaf_rotation=90, leaf_font_size=9, ax=ax)
+            else:
+                for i, kolumna in enumerate(krzywe.columns):
+                    g = numery_grup[i]
+                    if g == 0:
+                        ax.plot(x, krzywe[kolumna], color='gray', linestyle=':', alpha=0.4, linewidth=1)
+                    else:
+                        ax.plot(x, krzywe[kolumna], color=cmap((g - 1) % 10), alpha=0.6, linewidth=1)
+                ax.set_title(f"Metoda: {metoda} | Przygotowanie: {optymalizacja}")
+                ax.grid(True, linestyle='--', alpha=0.5)
+                
+            st.pyplot(fig)
+            plt.close(fig)
+            
+        with col_tabela:
+            st.subheader("📋 Grupy")
+            st.dataframe(wyniki, use_container_width=True, hide_index=True, height=300)
+            
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                wyniki.to_excel(writer, index=False)
+            
+            st.download_button(
+                label="📥 Pobierz Excel",
+                data=buffer.getvalue(),
+                file_name=f"wyniki_{metoda.lower().split()[0]}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+
+        # Raport tekstowy
+        st.write("---")
+        st.subheader("📝 Podsumowanie tekstowe grup")
+        unikalne_grupy = sorted(wyniki['Numer Grupy'].unique())
+        
+        for g in unikalne_grupy:
+            krzywe_w_grupie = wyniki[wyniki['Numer Grupy'] == g]['Krzywa'].tolist()
+            lista_str = ", ".join(krzywe_w_grupie)
+            
+            if g == 0:
+                st.markdown(f"🔴 **Szum / Anomalie pomiarowe** ({len(krzywe_w_grupie)} krzywych):")
+            else:
+                st.markdown(f"🟢 **Grupa {g}** ({len(krzywe_w_grupie)} krzywych):")
+            st.code(lista_str, language="")
+            
+    except Exception as ogolny_blad:
+        st.error(f"Problem z przetworzeniem danych: {ogolny_blad}")
+else:
+    st.info("💡 Aby rozpocząć, wgraj plik z dysku lub wklej link do Google Sheets powyżej.")
