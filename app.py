@@ -484,4 +484,194 @@ if df is not None:
                 input_dim = dane_do_algorytmu.shape[1]
                 net = AutoencoderKrzywych(input_dim=input_dim, latent_dim=4)
                 criterion = nn.MSELoss()
-                optimizer = optim.Adam(net.parameters(), lr=0.01, weight_decay=
+                optimizer = optim.Adam(net.parameters(), lr=0.01, weight_decay=1e-4)
+                
+                net.train()
+                for epoch in range(150):
+                    optimizer.zero_grad()
+                    latent, reconstructed = net(X_tensor)
+                    loss_recon = criterion(reconstructed, X_tensor)
+                    penalty_latent = torch.mean(torch.norm(latent, p=2, dim=1))
+                    loss = loss_recon + 0.01 * penalty_latent
+                    loss.backward()
+                    optimizer.step()
+                
+                net.eval()
+                with torch.no_grad():
+                    kodowanie_rdec, _ = net(X_tensor)
+                    dane_stabilne_rdec = kodowanie_rdec.numpy()
+                
+                model_rdec = KMeans(n_clusters=liczba_grup, random_state=42, n_init=10)
+                numery_grup = model_rdec.fit_predict(dane_stabilne_rdec) + 1
+
+        elif "ADClust" in metoda:
+            with st.spinner("🤖 Trwa inteligentny trening ADClust. Sieć neuronowa sama ustala liczbę grup..."):
+                X_tensor = torch.FloatTensor(dane_do_algorytmu)
+                input_dim = dane_do_algorytmu.shape[1]
+                net = AutoencoderKrzywych(input_dim=input_dim, latent_dim=4)
+                criterion = nn.MSELoss()
+                optimizer = optim.Adam(net.parameters(), lr=0.01)
+                
+                net.train()
+                for epoch in range(120):
+                    optimizer.zero_grad()
+                    latent, reconstructed = net(X_tensor)
+                    loss = criterion(reconstructed, X_tensor)
+                    loss.backward()
+                    optimizer.step()
+                
+                net.eval()
+                with torch.no_grad():
+                    latent_features, _ = net(X_tensor)
+                    dane_ukryte = latent_features.numpy()
+                
+                najlepsze_k = 2
+                najwyzszy_wynik = -1
+                
+                for k_test in range(2, 9):
+                    km_test = KMeans(n_clusters=k_test, random_state=42, n_init=5)
+                    etykiety_test = km_test.fit_predict(dane_ukryte)
+                    score = silhouette_score(dane_ukryte, etykiety_test)
+                    if score > najwyzszy_wynik:
+                        najwyzszy_wynik = score
+                        najlepsze_k = k_test
+                
+                model_adclust = KMeans(n_clusters=najlepsze_k, random_state=42, n_init=10)
+                numery_grup = model_adclust.fit_predict(dane_ukryte) + 1
+                st.success(f"✨ Sieć ADClust automatycznie ustaliła, że optymalna liczba grup to: **{najlepsze_k}**")
+
+        # Przygotowanie tabeli wynikowej
+        wyniki = pd.DataFrame({
+            'Krzywa': nazwy_krzywych,
+            'Numer Grupy': numery_grup
+        }).sort_values(by='Numer Grupy')
+        
+        # =================================================================
+        # REWOLUCJA: ROZBUDOWANY SYSTEM PODPOWIEDZI (ZAKŁADKI TABS)
+        # =================================================================
+        if "HDBSCAN" not in metoda and "ADClust" not in metoda:
+            with st.expander("🔍 Zaawansowana Podpowiedź Matematyczna (Dobór liczby klastrów K)", expanded=False):
+                tab_elbow, tab_silhouette, tab_bic = st.tabs([
+                    "📐 Metoda Łokcia (Inercja)", 
+                    "👤 Silhouette Score (Spójność)", 
+                    "🔮 Indeks BIC (Kryterium Bayesowskie)"
+                ])
+                
+                zakres_k = range(2, 11)
+                
+                with tab_elbow:
+                    st.write("📈 **Zasada interpretacji:** Szukamy wyraźnego załamania wykresu ('łokcia'), po którym spadek inercji traci na dynamice.")
+                    inercja = []
+                    for k in zakres_k:
+                        km = KMeans(n_clusters=k, random_state=42, n_init=5)
+                        km.fit(dane_do_algorytmu)
+                        inercja.append(km.inertia_)
+                    
+                    fig_elbow, ax_elbow = plt.subplots(figsize=(10, 3.2))
+                    ax_elbow.plot(zakres_k, inercja, 'ro-', linewidth=2)
+                    ax_elbow.set_xlabel('Liczba klastrów (K)')
+                    ax_elbow.set_ylabel('Inercja (SSE)')
+                    ax_elbow.set_xticks(list(zakres_k))
+                    ax_elbow.grid(True, linestyle='--', alpha=0.5)
+                    st.pyplot(fig_elbow)
+                    plt.close(fig_elbow)
+                    
+                with tab_silhouette:
+                    st.write("📈 **Zasada interpretacji:** Szukamy **globalnego maksimum** (najwyższego piku). Wyższa wartość oznacza logicznie odizolowane, spójne klastry.")
+                    sylwetki = []
+                    for k in zakres_k:
+                        km = KMeans(n_clusters=k, random_state=42, n_init=5)
+                        etykiety = km.fit_predict(dane_do_algorytmu)
+                        sylwetki.append(silhouette_score(dane_do_algorytmu, etykiety))
+                    
+                    fig_sil, ax_sil = plt.subplots(figsize=(10, 3.2))
+                    ax_sil.plot(zakres_k, sylwetki, 'bo-', linewidth=2)
+                    ax_sil.set_xlabel('Liczba klastrów (K)')
+                    ax_sil.set_ylabel('Współczynnik Sylwetki')
+                    ax_sil.set_xticks(list(zakres_k))
+                    ax_sil.grid(True, linestyle='--', alpha=0.5)
+                    st.pyplot(fig_sil)
+                    plt.close(fig_sil)
+                    
+                with tab_bic:
+                    st.write("📈 **Zasada interpretacji:** Szukamy **globalnego minimum** (najniższego punktu). Kryterium BIC nakłada silną matematyczną karę za nadmierne komplikowanie modelu.")
+                    bic_values = []
+                    for k in zakres_k:
+                        gmm_test = GaussianMixture(n_components=k, covariance_type='diag', random_state=42, n_init=2)
+                        gmm_test.fit(dane_do_algorytmu)
+                        bic_values.append(gmm_test.bic(dane_do_algorytmu))
+                    
+                    fig_bic, ax_bic = plt.subplots(figsize=(10, 3.2))
+                    ax_bic.plot(zakres_k, bic_values, 'go-', linewidth=2)
+                    ax_bic.set_xlabel('Liczba klastrów (K)')
+                    ax_bic.set_ylabel('Wartość BIC')
+                    ax_bic.set_xticks(list(zakres_k))
+                    ax_bic.grid(True, linestyle='--', alpha=0.5)
+                    st.pyplot(fig_bic)
+                    plt.close(fig_bic)
+
+        # Prezentacja graficzna wynikowa
+        col_wykres, col_tabela = st.columns([3, 1])
+        
+        with col_wykres:
+            st.subheader("📈 Wykres")
+            fig, ax = plt.subplots(figsize=(10, 5))
+            cmap = plt.get_cmap('tab10')
+            
+            if "Hierarchiczna" in metoda:
+                if "metoda Warda" in metoda:
+                    powiazania_tree = linkage(dane_do_algorytmu, method='ward')
+                    ax.set_title("Dendrogram (Metoda Warda - Odległość Euklidesowa)")
+                else:
+                    powiazania_tree = linkage(dane_do_algorytmu, method='average', metric='correlation')
+                    ax.set_title("Dendrogram (Metoda Średnich - Odległość Korelacyjna)")
+                    
+                dendrogram(powiazania_tree, labels=nazwy_krzywych, leaf_rotation=90, leaf_font_size=9, ax=ax)
+            else:
+                for i, kolumna in enumerate(krzywe.columns):
+                    g = numery_grup[i]
+                    if g == 0:
+                        ax.plot(x, krzywe[kolumna], color='gray', linestyle=':', alpha=0.4, linewidth=1)
+                    else:
+                        ax.plot(x, krzywe[kolumna], color=cmap((g - 1) % 10), alpha=0.6, linewidth=1)
+                ax.set_title(f"Metoda: {metoda} | Przygotowanie: {optymalizacja}")
+                ax.grid(True, linestyle='--', alpha=0.5)
+                
+            st.pyplot(fig)
+            plt.close(fig)
+            
+        with col_tabela:
+            st.subheader("📋 Grupy")
+            st.dataframe(wyniki, use_container_width=True, hide_index=True, height=300)
+            
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                wyniki.to_excel(writer, index=False)
+            
+            st.download_button(
+                label="📥 Pobierz Excel",
+                data=buffer.getvalue(),
+                file_name=f"wyniki_{metoda.lower().split()[0]}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+
+        # Raport tekstowy
+        st.write("---")
+        st.subheader("📝 Podsumowanie tekstowe grup")
+        unikalne_grupy = sorted(wyniki['Numer Grupy'].unique())
+        
+        for g in unikalne_grupy:
+            krzywe_w_grupie = wyniki[wyniki['Numer Grupy'] == g]['Krzywa'].tolist()
+            lista_str = ", ".join(krzywe_w_grupie)
+            
+            if g == 0:
+                st.markdown(f"🔴 **Szum / Anomalie pomiarowe** ({len(krzywe_w_grupie)} krzywych):")
+            else:
+                st.markdown(f"🟢 **Grupa {g}** ({len(krzywe_w_grupie)} krzywych):")
+            st.code(lista_str, language="")
+            
+    except Exception as ogolny_blad:
+        st.error(f"Problem z przetworzeniem danych: {ogolny_blad}")
+else:
+    st.info("💡 Aby rozpocząć, wgraj plik z dysku lub wklej link do Google Sheets powyżej.")
