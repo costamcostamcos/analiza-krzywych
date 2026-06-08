@@ -28,23 +28,34 @@ except ImportError:
     pytorch_dostepne = False
 
 # =================================================================
-# SŁOWNIK INTELIGENTNYCH OPISÓW METOD (DYMKI I PODPOWIEDZI)
+# SŁOWNIK INTELIGENTNYCH OPISÓW METOD KLASTERYZACJI
 # =================================================================
 OPISY_METOD = {
-    "K-means": "Klasyczny algorytm geometryczny. Szuka środków ciężkości grup. Szybki, ale wrażliwy na szum i przesunięcia.",
-    "PSO (Optymalizacja Rojem Cząstek)": "Algorytm heurystyczny oparty na naturze. Rój cząstek-zwiadowców szuka globalnego optimum, omijając lokalne pułapki.",
-    "NMF (Nieujemna Faktoryzacja Macierzy)": "Rozkłada krzywe wyłącznie na czyste składowe dodatnie. Idealna do fizycznych sygnałów i danych laboratoryjnych.",
-    "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich. Podejście probabilistyczne – wylicza procentową pewność przypisania krzywej do danej grupy.",
-    "BGMM (Bayesowski GMM)": "Zaawansowany probabilistyczny model Bayesowski. Samodzielnie wygasza nadmiarowe klastry i jest ultra-odporny na małą liczbę próbek.",
-    "Hierarchiczna Aglomeracyjna (metoda Warda)": "Buduje stabilne drzewo podobieństwa (dendrogram), minimalizując wariancję i błąd wewnątrz tworzonych klastrów. Wymaga miary Euklidesowej.",
-    "Hierarchiczna Korelacyjna (metoda średnich)": "NOWOŚĆ! Grupuje linie na podstawie współbieżności kształtu (korelacji). Całkowicie ignoruje przesunięcia w pionie oraz skalę amplitudy.",
-    "HDBSCAN (Gęstościowa - Auto K)": "Klastrowanie gęstościowe. Samo wykrywa optymalną liczbę grup i automatycznie odrzuca anomalie oraz szum (oznaczane jako Grupa 0).",
-    "Spectral Clustering": "Klastrowanie spektralne oparte na teorii grafów. Projektuje sieć powiązań, świetne do skomplikowanych, zagnieżdżonych struktur.",
-    "K-Shape (Kształt fali)": "Stworzony do serii czasowych. Wykorzystuje korelację wzajemną – rozpoznaje kształt fali nawet przy przesunięciu piku w lewo lub prawo.",
-    "DEC (Głębokie Uczenie - Sieć Neuronowa)": "Sztuczna sieć neuronowa (Autoenkoder) kompresuje krzywe do esencji matematycznej, skutecznie odcinając zaawansowany szum.",
-    "ADEC (Adwersarialne Głębokie Uczenie)": "Pojedynek dwóch sieci (Enkoder vs Dyskryminator). Wymusza idealne, ostre i bardzo zwarte granice między grupami.",
-    "RDEC (Regularizowane Głębokie Uczenie)": "Sieć neuronowa z matematycznym hamulcem (regularyzacją L2). Zapobiega przeuczeniu, idealna do mniejszej liczby krzywych (np. 44).",
-    "ADClust (Automatyczne Głębokie Uczenie)": "Pełna automatyzacja AI. Sieć neuronowa sama skanuje strukturę i bez udziału użytkownika wybiera najlepszą liczbę grup."
+    "K-means": "Dzieli przestrzeń cech na tzw. obszary Voronoia. Algorytm dąży do minimalizacji wariancji wewnątrzklastrowej poprzez naprzemienne przypisywanie obiektów do najbliższych prototypów (środków ciężkości) i aktualizację tych środków. Najlepiej sprawdza się, gdy klastry są zwarte, odizolowane i sferyczne.",
+    "PSO (Optymalizacja Rojem Cząstek)": "Metaheurystyka inspirowana naturą, imitująca zachowanie stada ptaków. Zamiast pojedynczego punktu startowego, w wielowymiarowej przestrzeni porusza się populacja (rój) cząstek-zwiadowców. Każda cząstka koryguje swój tor lotu na podstawie własnych doświadczeń oraz sukcesów całego roju, co pozwala skutecznie omijać lokalne minima matematyczne.",
+    "NMF (Nieujemna Faktoryzacja Macierzy)": "Algorytm nieliniowej redukcji wymiarowości, który rozkłada macierz danych na iloczyn dwóch macierzy o elementach wyłącznie nieujemnych. Traktuje Twoje krzywe jako kombinację liniową bazowych, nieujemnych 'klocków' sygnałowych. Przypisanie do grupy następuje na podstawie dominującego komponentu fizycznego, co eliminuje nienaturalne matematycznie wartości ujemne.",
+    "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich. Zakłada, że struktura danych pod wejściem składa się z określonej liczby wielowymiarowych rozkładów normalnych. Realizuje tzw. 'miękkie przypisanie' (soft clustering) – zamiast suchej decyzji 0/1, wylicza procentową pewność (prawdopodobieństwo), z jaką dana krzywa pasuje do każdego z klastrów. Idealne do identyfikacji próbek granicznych.",
+    "BGMM (Bayesowski GMM)": "Rozszerzenie GMM o probabilistykę Bayesowską z procesem Dirichleta. Traktuje parametry klastrów jako zmienne losowe. Posiada unikalną inżynierską zaletę: jeśli zadana maksymalna liczba grup jest zbyt duża, algorytm automatycznie wygasza niepotrzebne klastry (przypisuje im wagę bliską zeru), chroniąc model przed przeuczeniem na małych zbiorach danych.",
+    "Hierarchiczna Aglomeracyjna (metoda Warda)": "Algorytm budujący drzewo powiązań od dołu do góry. Każda krzywa startuje jako osobny klaster, a w kolejnych krokach łączone są grupy, które generują najmniejszy możliwy wzrost całkowitej wariancji wewnątrzklastrowej (błędu SSE). Wynik końcowy w postaci dendrogramu pozwala na pełną ocenę struktury pokrewieństwa sygnałów.",
+    "Hierarchiczna Korelacyjna (metoda średnich)": "Podejście hierarchiczne (UPGMA), które zamiast klasycznej odległości przestrzennej (metryki Euklidesowej) mierzy stopień współliniowości wykresów za pomocą odległości korelacyjnej (1 - r Pearsona). Łączy grupy na podstawie średnich powiązań, skupiając się wyłącznie na synchroniczności trendów i kształcie fali, ignorując skalę i przesunięcia pionowe Y.",
+    "HDBSCAN (Gęstościowa - Auto K)": "Zaawansowane klastrowanie gęstościowe oparte na teorii grafów. Szuka obszarów o wysokiej kondensacji punktów oddzielonych strefami pustki. Nie wymaga definiowania liczby klastrów (K). Krzywe nietypowe lub zaszumione są automatycznie odrzucane i oznaczane jako grupa 0, dzięki czemu nie zaburzają one czystości głównych profili.",
+    "Spectral Clustering": "Wykorzystuje wartości własne (widmo) macierzy podobieństwa danych do redukcji wymiarowości przed właściwym podziałem. Buduje graf powiązań między wszystkimi krzywymi i szuka optymalnych cięć topologicznych tego grafu. Genialnie radzi sobie z układami nieliniowymi i strukturami zagnieżdżonymi wewnątrz siebie.",
+    "K-Shape (Kształt fali)": "Wyspecjalizowany algorytm stworzony ściśle do analizy kształtu serii czasowych. Wykorzystuje znormalizowaną korelację wzajemną (cross-correlation) jako miarę odległości geometrycznej. Potrafi rozpoznać, że dwie linie mają ten sam kształt, nawet jeśli ich piki charakterystyczne są przesunięte w czasie (w lewo lub w prawo).",
+    "DEC (Głębokie Uczenie - Sieć Neuronowa)": "Sztuczna sieć neuronowa (Autoenkoder) uczy się nieliniowej kompresji danych do małej przestrzeni ukrytej (latent space), jednocześnie optymalizując centra klastrów poprzez minimalizację dywergencji Kullbacka-Leiblera (KL). Proces ten odrzuca skomplikowany, nieliniowy szum laboratoryjny.",
+    "ADEC (Adwersarialne Głębokie Uczenie)": "Rozbudowanie sieci DEC o trening adwersarialny (koncepcja GAN). Dodatkowy blok Dyskryminatora walczy z Enkoderem, zmuszając go do ułożenia cech krzywych w idealnie gładki rozkład matematyczny. Eliminuje to puste przestrzenie w strukturze danych, generując niezwykle zwarte klastry o ostrych granicach.",
+    "RDEC (Regularizowane Głębokie Uczenie)": "Model DEC wyposażony w silne bariery regularyzacyjne (L2 oraz weight decay). Nakłada matematyczną karę za zbyt skomplikowane wagi sieci oraz zbyt wysokie rozproszenie przestrzeni ukrytej. Zmusza to sieć neuronową do szukania najprostszych, najbardziej fundamentalnych trendów geometrycznych fali, chroniąc przed przeuczeniem.",
+    "ADClust (Automatyczne Głębokie Uczenie)": "Autonomiczny kombajn AI. Głęboki Autoenkoder kompresuje sygnał do przestrzeni cech ukrytych, a zaimplementowany wewnątrz pętli uczącej moduł statystyczny skanuje przestrzeń indeksem Silhouette, samodzielnie zatwierdzając matematycznie najlepszą liczbę klastrów bez ingerencji inżyniera."
+}
+
+# =================================================================
+# SŁOWNIK OPISÓW WSTĘPNEGO PRZYGOTOWANIA DANYCH
+# =================================================================
+OPISY_PREPROCESSING = {
+    "Standardowa": "Polega na klasycznej standaryzacji (Z-score). Od każdej wartości punktu odejmowana jest średnia danej kolumny, a wynik dzielony jest przez jej odchylenie standardowe. Sprowadza to wszystkie punkty pomiarowe krzywych do wspólnej skali statystycznej (średnia=0, odchylenie=1), eliminując sytuację, w której bezwzględna wartość sygnału dominuje nad jego dynamiką.",
+    "Analiza trendu": "Wyznacza różnice skończone (pochodne pierwszego rzędu) pomiędzy sąsiednimi punktami wzdłuż osi X (`y_next - y_current`), a następnie poddaje je standaryzacji. Transformacja ta przenosi analizę w obszar czystej dynamiki linii. Algorytmy badają prędkość narastania i opadania sygnału (nachylenie zboczy), całkowicie ignorując pozycję wykresów w pionie.",
+    "FeatureExtraction": "Głęboka transformacja inżynierska. Zamiast surowych setek punktów, każda krzywa opisywana jest przez 9 zaawansowanych deskryptorów: wartość maksymalną, pozycję piku X, średnią, odchylenie standardowe, skośność (asymetrię fali), kurtozę (strzelistość pików) oraz amplitudy pierwszych 3 głównych składowych harmonicznych uzyskanych z Szybkiej Transformaty Fouriera (FFT). Pozwala algorytmom badać sygnał w dziedzinie częstotliwości.",
+    "MinMaxScaler": "Dokonuje liniowej transformacji danych, przesuwając i skalując wartości każdej krzywej tak, aby zamknęły się w ścisłym, znormalizowanym przedziale od 0 do 1. Metoda ta zachowuje oryginalne proporcje amplitud i jest bezwzględnie wymagana przez algorytmy takie jak NMF, które matematycznie nie tolerują wartości ujemnych.",
+    "Filtrowanie szumów": "Wykorzystuje algorytm kroczącego okna średniej (`rolling window`) o zadanym rozmiarze, centrując wynik. Każdy punkt wykresu zastępowany jest średnią arytmetyczną z jego bezpośredniego otoczenia. Operacja ta skutecznie odcina fluktuacje wysokiej częstotliwości, przypadkowe szpilki pomiarowe i zakłócenia aparatury, wygładzając nadrzędny profil fali."
 }
 
 # =================================================================
@@ -223,7 +234,7 @@ if df is not None:
         krzywe = df.iloc[:, 1:]
         nazwy_krzywych = krzywe.columns.tolist()
         
-        # Lista metod głównych z uwzględnieniem nowej hierarchii korelacyjnej
+        # Słownik metod głównych
         lista_metod = [
             "K-means", 
             "PSO (Optymalizacja Rojem Cząstek)",
@@ -276,7 +287,19 @@ if df is not None:
                 label_k = "Maksymalna liczba grup (K):" if "BGMM" in metoda else "Wybierz oczekiwaną liczbę grup (K):"
                 liczba_grup = st.slider(label_k, min_value=2, max_value=10, value=5)
 
-        st.markdown(f"💡 **O metodzie:** *{OPISY_METOD.get(metoda, '')}*")
+        # =================================================================
+        # REWOLUCJA: ROZBUDOWANY, DYNAMICZNY PANEL METODOLOGICZNY (DWIE KOLUMNY)
+        # =================================================================
+        with st.expander("📚 Kompleksowy Opis Metodologiczny (Teoria & Synergia Operacyjna)", expanded=True):
+            col_desc1, col_desc2 = st.columns(2)
+            with col_desc1:
+                st.markdown(f"#### 🤖 Algorytm Główny: `{metoda}`")
+                st.write(OPISY_METOD.get(metoda, ""))
+                # Dynamiczny opis synergii z uwzględnieniem wybranej obróbki danych
+                st.markdown(f"**Kontekst operacyjny:** Wybranie obróbki *'{optymalizacja}'* sprawia, że algorytm `{metoda.split()[0]}` nie analizuje surowego sygnału Excela bezpośrednio w punktach, lecz przetwarza macierz matematyczną ustrukturyzowaną ściśle pod kątem specyfiki tego filtra. Zwiększa to stabilność grupowania i odporność na fluktuacje.")
+            with col_desc2:
+                st.markdown(f"#### ⚙️ Obróbka Wstępna: `{optymalizacja}`")
+                st.write(OPISY_PREPROCESSING.get(optymalizacja, ""))
 
         # =================================================================
         # PRZETWARZANIE DANYCH WEJŚCIOWYCH
@@ -359,7 +382,6 @@ if df is not None:
             numery_grup = fcluster(powiazania, t=liczba_grup, criterion='maxclust')
 
         elif "Korelacyjna" in metoda:
-            # NOWOŚĆ: REALIZACJA MATEMATYCZNA ODLEGŁOŚCI KORELACYJNEJ (METODA ŚREDNICH)
             powiazania = linkage(dane_do_algorytmu, method='average', metric='correlation')
             numery_grup = fcluster(powiazania, t=liczba_grup, criterion='maxclust')
             
@@ -528,9 +550,7 @@ if df is not None:
             'Numer Grupy': numery_grup
         }).sort_values(by='Numer Grupy')
         
-        # =================================================================
-        # PANEL PODPOWIEDZI MATEMATYCZNEJ (Dostępny dla wszystkich manualnych K)
-        # =================================================================
+        # Sekcja: METODA ŁOKCIA (Dostępna dla wszystkich manualnych K)
         if "HDBSCAN" not in metoda and "ADClust" not in metoda:
             with st.expander("🔍 Podpowiedź matematyczna (Metoda Łokcia)"):
                 st.write("Poniższy wykres inercji pomaga dobrać optymalną liczbę grup (K) dla aktualnie przygotowanych danych pomiarowych.")
@@ -559,7 +579,6 @@ if df is not None:
             cmap = plt.get_cmap('tab10')
             
             if "Hierarchiczna" in metoda:
-                # Dynamiczny wybór konfiguracji dendrogramu w zależności od wybranej metody
                 if "metoda Warda" in metoda:
                     powiazania_tree = linkage(dane_do_algorytmu, method='ward')
                     ax.set_title("Dendrogram (Metoda Warda - Odległość Euklidesowa)")
