@@ -50,7 +50,7 @@ OPISY_METOD = {
     "Spectral Clustering": "Wykorzystuje wartości własne (widmo) macierzy podobieństwa danych do redukcji wymiarowości przed właściwym podziałem. Buduje graf powiązań między wszystkimi krzywymi.",
     "K-Shape (Kształt fali)": "Wyspecjalizowany algorytm stworzony ściśle do analizy kształtu serii czasowych. Wykorzystuje znormalizowaną korelację wzajemną. Rozpoznaje kształt fali przesuniętej w czasie.",
     "DEC (Głębokie Uczenie - Sieć Neuronowa)": "Sztuczna sieć neuronowa (Autoenkoder) szkolona na bazie danych namnożonej przez augmentację sygnału (z 44 do 2200 krzywych).",
-    "ADEC (Adwersarialne Głębokie Uczenie)": "Pojedynek adwersarialny enkodera i dyskryminatora zasilany sztucznie namnożonym zbiorem danych (2200 prób). Wymusza ostre i bardzo zwarte granice między grupami, całkowicie zapobieganiega przeuczeniu.",
+    "ADEC (Adwersarialne Głębokie Uczenie)": "Pojedynek adwersarialny enkodera i dyskryminatora zasilany sztucznie namnożonym zbiorem danych (2200 prób). Wymusza ostre i bardzo zwarte granice między grupami, całkowicie zapobiega przeuczeniu.",
     "RDEC (Regularizowane Głębokie Uczenie)": "Model DEC wyposażony w silne bariery regularyzacyjne (L2) oraz zaawansowany moduł augmentacji sygnału. Zmusza sieć neuronową do szukania najprostszych, najbardziej powtarzalnych wzorców geometrycznych fal.",
     "ADClust (Automatyczne Głębokie Uczenie)": "Autonomiczny kombajn AI, który sam decyduje o liczbie grup za pomocą wskaźnika Silhouette, wykonując uprzednio proces głębokiego uczenia na 2200 wygenerowanych matematycznie wariantach."
 }
@@ -238,8 +238,10 @@ def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3):
         return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(dane) + 1
 
 # =================================================================
-# SEKCJA INTERFEJSU UŻYTKOWNIKA (UI) STREAMLIT
+# GŁÓWNY RDZEŃ WYKONAWCZY INTERFEJSU
 # =================================================================
+st.title("📊 Interaktywny Analizator Krzywych AI Pro")
+
 st.write("### Ustawienia analizy")
 typ_zrodla = st.radio("Wybierz źródło danych:", ["Plik Excel (.xlsx)", "Link do Google Sheets"], horizontal=True)
 
@@ -249,13 +251,17 @@ df_expert_raw = None
 if typ_zrodla == "Plik Excel (.xlsx)":
     uploaded_file = st.file_uploader("Wgraj plik Excel", type=["xlsx"])
     if uploaded_file is not None:
-        # Odczyt Arkusza 1 (Krzywe sygnałowe)
+        # Odczyt surowego sygnału (Arkusz 1)
         df_raw = pd.read_excel(uploaded_file, sheet_name=0, header=None)
         df = inteligentne_pobranie_tabeli(df_raw)
         
-        # NOWOŚĆ: Próba bezpiecznego pobrania Spodziewanego Podziału z drugiego arkusza (index 1)
+        # Elastyczne szukanie Ground Truth po nazwie lub pozycji
         try:
-            df_expert_raw = pd.read_excel(uploaded_file, sheet_name=1)
+            excel_file = pd.ExcelFile(uploaded_file)
+            if "Ground Truth" in excel_file.sheet_names:
+                df_expert_raw = pd.read_excel(uploaded_file, sheet_name="Ground Truth")
+            else:
+                df_expert_raw = pd.read_excel(uploaded_file, sheet_name=1)
         except Exception:
             df_expert_raw = None
 else:
@@ -263,12 +269,18 @@ else:
     if link_sheets and "docs.google.com/spreadsheets" in link_sheets:
         try:
             url_base = link_sheets.split("/edit")[0]
-            # Eksport pierwszego arkusza danych pomiarowych
-            df = inteligentne_pobranie_tabeli(pd.read_excel(f"{url_base}/export?format=xlsx&gid=0", header=None))
-            # Eksport drugiego arkusza spodziewanego podziału
-            df_expert_raw = pd.read_excel(f"{url_base}/export?format=xlsx&gid=1")
+            # Pobieramy główną tabelę pomiarów
+            df = inteligentne_pobranie_tabeli(pd.read_excel(f"{url_base}/export?format=xlsx", sheet_name=0, header=None))
+            
+            # Wczytujemy plik jako pakiet arkuszy w celu dopasowania po nazwie tekstowej "Ground Truth"
+            sheets_dict = pd.read_excel(f"{url_base}/export?format=xlsx", sheet_name=None)
+            if "Ground Truth" in sheets_dict:
+                df_expert_raw = sheets_dict["Ground Truth"]
+            elif len(sheets_dict) > 1:
+                keys = list(sheets_dict.keys())
+                df_expert_raw = sheets_dict[keys[1]]
         except Exception:
-            st.error("Nie udało się pobrać danych ze struktur arkusza Google Sheets.")
+            st.error("Nie udało się pobrać danych strukturalnych. Upewnij się, że arkusz jest udostępniony jako widoczny dla każdego posiadacza linku.")
 
 if df is not None:
     try:
@@ -284,7 +296,13 @@ if df is not None:
             st.session_state.wybrana_metoda = lista_metod[0]
 
         col_param1, col_param2, col_param3 = st.columns(3)
-        with col_param1: metoda = st.selectbox("Wybierz metodę główną:", lista_metod, key="wybrana_metoda", help=OPISY_METOD.get(st.session_state.wybrana_metoda, ""))
+        with col_param1: 
+            metoda = st.selectbox(
+                "Wybierz metodę główną:", 
+                lista_metod, 
+                key="wybrana_metoda", 
+                help="Wskaż algorytm uczenia maszynowego lub sieci neuronowej do podziału krzywych pomiarowych."
+            )
         with col_param2: optymalizacja = st.selectbox("Wybierz wstępne przygotowanie danych:", ["Standardowa", "Analiza trendu", "FeatureExtraction", "MinMaxScaler", "Filtrowanie szumów"]) if "K-Shape" not in metoda and "DEC" not in metoda and "RDEC" not in metoda and "ADClust" not in metoda and "NMF" not in metoda else "Standardowa"
         with col_param3: liczba_grup = st.slider("Minimalna wielkość grupy (HDBSCAN):" if "HDBSCAN" in metoda else "Maksymalna liczba grup (BGMM):" if "BGMM" in metoda else "Liczba grup (K):", min_value=2, max_value=10, value=5) if "ADClust" not in metoda else 5
 
@@ -293,28 +311,39 @@ if df is not None:
         
         with col_sidebar:
             st.markdown("### Spodziewany Podział Grup")
-            st.caption("Tabela została zainicjalizowana na podstawie drugiego arkusza wprowadzonego pliku Excel. Możesz w locie modyfikować przypisania na ekranie:")
+            st.caption("Modyfikuj przypisania w locie na ekranie:")
             
-            # REWOLUCJA: Logika automatycznego uzupełniania tabeli z drugiego arkusza przy zachowaniu edytowalności
+            # STABILNA INICJALIZACJA DANYCH EKSPERCKICH
             if 'expert_dict' not in st.session_state:
-                # Jeśli wczytany plik zawiera poprawną strukturę w drugim arkuszu
-                if df_expert_raw is not None and len(df_expert_raw) >= len(nazwy_krzywych):
-                    # Oczyszczamy kolumny (szukamy nazw krzywych oraz przypisania literowego)
+                if df_expert_raw is not None and len(df_expert_raw) > 0:
                     df_expert_raw.columns = [str(c).strip() for c in df_expert_raw.columns]
                     col_k = df_expert_raw.columns[0]
                     col_g = df_expert_raw.columns[1]
                     
+                    expert_mapping = {}
+                    for _, row in df_expert_raw.iterrows():
+                        raw_key = str(row[col_k]).strip().lower()
+                        raw_val = str(row[col_g]).strip()
+                        
+                        expert_mapping[raw_key] = raw_val
+                        # Inteligentne parowanie typów (Obsługa sytuacji gdy w Excelu jest np. liczba 1 zamiast tekstu y1)
+                        if raw_key.isdigit():
+                            expert_mapping[f"y{raw_key}"] = raw_val
+                    
+                    expert_list = []
+                    for name in nazwy_krzywych:
+                        norm_name = str(name).strip().lower()
+                        expert_list.append(expert_mapping.get(norm_name, "a"))
+                        
                     init_df = pd.DataFrame({
                         "Krzywa": nazwy_krzywych,
-                        "Grupa Eksperta": [str(df_expert_raw[df_expert_raw[col_k] == name][col_g].values[0]).strip() if name in df_expert_raw[col_k].values else "a" for name in nazwy_krzywych]
+                        "Grupa Eksperta": expert_list
                     })
                 else:
-                    # Brak drugiego arkusza - stosujemy domyślną inicjalizację bezpieczną "a"
                     init_df = pd.DataFrame({"Krzywa": nazwy_krzywych, "Grupa Eksperta": ["a"] * len(nazwy_krzywych)})
                 
                 st.session_state.expert_dict = init_df
             
-            # Wywołanie interaktywnego Data Editora chmury
             edited_gt = st.data_editor(st.session_state.expert_dict, use_container_width=True, hide_index=True, disabled=["Krzywa"])
             st.session_state.expert_dict = edited_gt
             etykiety_eksperta = edited_gt["Grupa Eksperta"].astype(str).tolist()
