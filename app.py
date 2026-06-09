@@ -32,7 +32,7 @@ except ImportError:
 # SŁOWNIK INTELIGENTNYCH OPISÓW METOD KLASTERYZACJI
 # =================================================================
 OPISY_METOD = {
-    "K-means": "Dzieli przestrzeń cech na tzw. obszary Voronoia. Algorytm dąży to minimalizacji wariancji wewnątrzklastrowej poprzez naprzemienne przypisywanie obiektów do najbliższych prototypów (środków ciężkości) i aktualizację tych środków. Najlepiej sprawdza się, gdy klastry są zwarte, odizolowane i sferyczne.",
+    "K-means": "Dzieli przestrzeń cech na tzw. obszary Voronoia. Algorytm dąży do minimalizacji wariancji wewnątrzklastrowej poprzez naprzemienne przypisywanie obiektów do najbliższych prototypów (środków ciężkości) i aktualizację tych środków. Najlepiej sprawdza się, gdy klastry są zwarte, odizolowane i sferyczne.",
     "Klastrowanie Konsensusowe (Ensemble Voting)": "Metoda komitetowa (Ensemble Learning). Uruchamia równolegle zróżnicowany zestaw algorytmów (K-Means, GMM, Spectral, Ward) i buduje 'macierz współwystępowania', rejestrującą jak często dane dwie krzywe były przypisywane do jednej grupy. Ostateczny podział jest fuzją decyzji wszystkich modeli, co daje potężną stabilność matematyczną i odporność na anomalie pojedynczych metod.",
     "PSO (Optymalizacja Rojem Cząstek)": "Metaheurystyka inspirowana naturą, imitująca zachowanie stada ptaków. Zamiast pojedynczego punktu startowego, w wielowymiarowej przestrzeni porusza się populacja (rój) cząstek-zwiadowców. Każda cząstka koryguje swój tor lotu na podstawie własnych doświadczeń oraz sukcesów całego roju, co pozwala skutecznie omijać lokalne minima matematyczne.",
     "NMF (Nieujemna Faktoryzacja Macierzy)": "Algorytm nieliniowej redukcji wymiarowości, który rozkłada macierz danych na iloczyn dwóch macierzy o elementach wyłącznie nieujemnych. Traktuje Twoje krzywe jako kombinację liniową bazowych, nieujemnych 'klocków' sygnałowych. Przypisanie do grupy następuje na podstawie dominującego komponentu fizycznego, co eliminuje nienaturalne matematycznie wartości ujemne.",
@@ -55,7 +55,7 @@ OPISY_METOD = {
 OPISY_PREPROCESSING = {
     "Standardowa": "Polega na klasycznej standaryzacji (Z-score). Od każdej wartości punktu odejmowana jest średnia danej kolumny, a wynik dzielony jest przez jej odchylenie standardowe. Sprowadza to wszystkie punkty pomiarowe krzywych do wspólnej skali statystycznej (średnia=0, odchylenie=1), eliminując sytuację, w której bezwzględna wartość sygnału dominuje nad jego dynamiką.",
     "Analiza trendu": "Wyznacza różnice skończone (pochodne pierwszego rzędu) pomiędzy sąsiednimi punktami wzdłuż osi X (`y_next - y_current`), a następnie poddaje je standaryzacji. Transformacja ta przenosi analizę w obszar czystej dynamiki linii. Algorytmy badają prędkość narastania i opadania sygnału (nachylenie zboczy), całkowicie ignorując pozycję wykresów w pionie.",
-    "FeatureExtraction": "Głęboka transformacja inżynierska. Zamiast surowych setek punktów, każda krzywa opisywana jest przez 9 zaawansowanych deskryptorów: wartość maksymalną, pozycję piku X, średnią, odchylenie standardowe, skośność (asymetrię fali), kurtoza (strzelistość pików) oraz amplitudy pierwszych 3 głównych składowych harmonicznych uzyskanych z Szybkiej Transformaty Fouriera (FFT). Pozwala algorytmom badać sygnał w dziedzinie częstotliwości.",
+    "FeatureExtraction": "Głęboka transformacja inżynierska 3D. Każda krzywa opisywana jest przez 12 zaawansowanych cech łączących dziedzinę czasu, częstotliwości i skali: Max, Pozycja X, Średnia, Std, Skośność, Kurtoza, pierwsze 3 harmoniczne Szybkiej Transformaty Fouriera (FFT) oraz 3 wskaźniki Dyskretnej Transformaty Falowej (DWT Haar: Średnia Aproksymacji, Energia Detali, Zmienność Detali).",
     "MinMaxScaler": "Dokonuje liniowej transformacji danych, przesuwając i skalując wartości każdej krzywej tak, aby zamknęły się w ścisłym, znormalizowanym przedziale od 0 do 1. Metoda ta zachowuje oryginalne proporcje amplitud i jest bezwzględnie wymagana przez algorytmy takie jak NMF, które matematycznie nie tolerują wartości ujemnych.",
     "Filtrowanie szumów": "Wykorzystuje algorytm kroczącego okna średniej (`rolling window`) o zadanym rozmiarze, centrując wynik. Każdy punkt wykresu zastępowany jest średnią arytmetyczną z jego bezpośredniego otoczenia. Operacja ta skutecznie odcina fluktuacje wysokiej częstotliwości, przypadkowe szpilki pomiarowe i zakłócenia aparatury, wygładzając nadrzędny profil fali."
 }
@@ -327,6 +327,7 @@ if df is not None:
             scaler = StandardScaler()
             dane_do_algorytmu = scaler.fit_transform(krzywe_opt)
         elif optymalizacja == "FeatureExtraction":
+            # REWOLUCJA: EKSTRAKCJA CECH ROZBUDOWANA O STATYSTYKĘ WYŻSZYCH RZĘDÓW, FFT ORAZ DWT HAAR
             cechy = pd.DataFrame(index=nazwy_krzywych)
             cechy['Max'] = krzywe.max().values
             cechy['Poz_Max'] = krzywe.idxmax().apply(lambda idx: x.iloc[idx]).values
@@ -335,10 +336,37 @@ if df is not None:
             cechy['Skośność'] = krzywe.skew().values
             cechy['Kurtoza'] = krzywe.kurt().values
             
+            # 1. Szybka Transformata Fouriera (FFT) - Dziedzina Częstotliwości
             fft_amplitudy = np.abs(np.fft.rfft(krzywe, axis=0))
             maks_czestotliwosci = min(4, fft_amplitudy.shape[0])
             for f_idx in range(1, maks_czestotliwosci):
                 cechy[f'FFT_Składowa_{f_idx}'] = fft_amplitudy[f_idx, :]
+            
+            # 2. NOWOŚĆ: Dyskretna Transformata Falowa (Haar DWT) - Dziedzina Czasu-Skali
+            dwt_a_mean = []
+            dwt_d_energy = []
+            dwt_d_std = []
+            
+            for col in krzywe.columns:
+                signal = krzywe[col].values
+                # DWT wymaga parzystej długości sygnału
+                if len(signal) % 2 != 0:
+                    signal = signal[:-1]
+                
+                even = signal[0::2]
+                odd = signal[1::2]
+                
+                # Rzutowanie na falki Haara (Aproksymacja i Detale stopnia 1)
+                approx = (even + odd) / np.sqrt(2)
+                detail = (even - odd) / np.sqrt(2)
+                
+                dwt_a_mean.append(np.mean(approx))          # Średni poziom makro-trendu fali
+                dwt_d_energy.append(np.sum(detail ** 2))     # Całkowita energia mikro-skoków/szumu
+                dwt_d_std.append(np.std(detail))            # Fluktuacja lokalna zbocza
+                
+            cechy['DWT_Haar_A_Srednia'] = dwt_a_mean
+            cechy['DWT_Haar_D_Energia'] = dwt_d_energy
+            cechy['DWT_Haar_D_Std'] = dwt_d_std
             
             scaler = StandardScaler()
             dane_do_algorytmu = scaler.fit_transform(cechy)
@@ -365,13 +393,11 @@ if df is not None:
                 N = dane_do_algorytmu.shape[0]
                 macierz_konsensusu = np.zeros((N, N))
                 
-                # Definiujemy zróżnicowane algorytmy bazowe
                 m1 = KMeans(n_clusters=liczba_grup, random_state=1, n_init=5)
                 m2 = GaussianMixture(n_components=liczba_grup, random_state=2, n_init=2)
                 m3 = SpectralClustering(n_clusters=liczba_grup, random_state=3, assign_labels='discretize')
                 m4_link = linkage(dane_do_algorytmu, method='ward')
                 
-                # Wyciągamy predykcje z każdego modelu
                 p1 = m1.fit_predict(dane_do_algorytmu)
                 p2 = m2.fit_predict(dane_do_algorytmu)
                 p3 = m3.fit_predict(dane_do_algorytmu)
@@ -379,20 +405,15 @@ if df is not None:
                 
                 wszystkie_predykcje = [p1, p2, p3, p4]
                 
-                # Budowanie macierzy ko-asocjacyjnej
                 for pred in wszystkie_predykcje:
                     for i in range(N):
                         for j in range(N):
                             if pred[i] == pred[j]:
                                 macierz_konsensusu[i, j] += 1
                                 
-                # Normalizacja macierzy do przedziału [0, 1] (prawdopodobieństwo konsensusu)
                 macierz_konsensusu /= len(wszystkie_predykcje)
-                
-                # Odległość konsensusowa = 1 - prawdopodobieństwo wspólnego klastra
                 macierz_odleglosci = 1.0 - macierz_konsensusu
                 
-                # Finalna fuzja hierarchiczna na bazie macierzy odległości konsensusowej
                 finalne_linkage = linkage(macierz_odleglosci, method='average')
                 numery_grup = fcluster(finalne_linkage, t=liczba_grup, criterion='maxclust')
                 
@@ -423,6 +444,7 @@ if df is not None:
                     n_init=5
                 )
                 numery_grup = model_bgmm.fit_predict(dane_do_algorytmu) + 1
+            
         elif "metoda Warda" in metoda:
             powiazania = linkage(dane_do_algorytmu, method='ward')
             numery_grup = fcluster(powiazania, t=liczba_grup, criterion='maxclust')
