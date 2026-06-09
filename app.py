@@ -44,8 +44,8 @@ OPISY_METOD = {
     "Spectral Clustering": "Wykorzystuje wartości własne (widmo) macierzy podobieństwa danych do redukcji wymiarowości przed właściwym podziałem. Buduje graf powiązań między wszystkimi krzywymi.",
     "K-Shape (Kształt fali)": "Wyspecjalizowany algorytm stworzony ściśle do analizy kształtu serii czasowych. Wykorzystuje znormalizowaną korelację wzajemną. Rozpoznaje kształt fali przesuniętej w czasie.",
     "DEC (Głębokie Uczenie - Sieć Neuronowa)": "Sztuczna sieć neuronowa (Autoenkoder) szkolona na bazie danych namnożonej przez augmentację sygnału (z 44 do 2200 krzywych).",
-    "ADEC (Adwersarialne Głębokie Uczenie)": "Pojedynek adwersarialny enkodera i dyskryminatora zasilany sztucznie namnożonym zbiorem danych (2200 prób). Wymusza ostre i bardzo zwarte granice między grupami.",
-    "RDEC (Regularizowane Głębokie Uczenie)": "Model DEC wyposażony w silne bariery regularyzacyjne (L2) oraz zaawansowany moduł augmentacji sygnału.",
+    "ADEC (Adwersarialne Głębokie Uczenie)": "Pojedynek adwersarialny enkodera i dyskryminatora zasilany sztucznie namnożonym zbiorem danych (2200 prób). Wymusza ostre i bardzo zwarte granice między grupami, całkowicie zapobiegając przeuczeniu.",
+    "RDEC (Regularizowane Głębokie Uczenie)": "Model DEC wyposażony w silne bariery regularyzacyjne (L2) oraz zaawansowany moduł augmentacji sygnału. Zmusza sieć neuronową do szukania najprostszych, najbardziej powtarzalnych wzorców geometrycznych fal.",
     "ADClust (Automatyczne Głębokie Uczenie)": "Autonomiczny kombajn AI, który sam decyduje o liczbie grup za pomocą wskaźnika Silhouette, wykonując uprzednio proces głębokiego uczenia na 2200 wygenerowanych matematycznie wariantach."
 }
 
@@ -61,8 +61,30 @@ OPISY_PREPROCESSING = {
 }
 
 # =================================================================
-# GENERATOR MATEMATYCZNEJ AUGMENTACJI KRZYWYCH
+# GLOBALNE FUNKCJE POMOCNICZE (ZADEKLAROWANE NA SAMYM GÓRZE PLIKU)
 # =================================================================
+def inteligentne_pobranie_tabeli(df_raw):
+    df_raw = df_raw.dropna(how='all', axis=0).dropna(how='all', axis=1)
+    df_raw = df_raw.reset_index(drop=True)
+    indeks_startu = 0
+    for idx, row in df_raw.iterrows():
+        if row.notna().sum() > 1:
+            if idx + 1 < len(df_raw):
+                nastepny_wiersz = df_raw.iloc[idx + 1]
+                ile_liczb = pd.to_numeric(nastepny_wiersz, errors='coerce').notna().sum()
+                if ile_liczb > 1:
+                    indeks_startu = idx
+                    break
+                    
+    naglowki = df_raw.iloc[indeks_startu]
+    df_czysty = df_raw.iloc[indeks_startu + 1:].copy()
+    df_czysty.columns = naglowki
+    df_czysty = df_czysty.reset_index(drop=True)
+    df_czysty = df_czysty.apply(pd.to_numeric, errors='coerce')
+    df_czysty = df_czysty.dropna(how='all', axis=1)
+    df_czysty = df_czysty.dropna(subset=[df_czysty.columns[0]])
+    return df_czysty
+
 def augmentuj_dane(X_oryginalne, czynniki_kopii=50, noise_level=0.02, scale_range=0.05):
     N, F = X_oryginalne.shape
     X_namnozone = []
@@ -156,16 +178,16 @@ if pytorch_dostepne:
         def forward(self, x):
             return self.model(x)
 
-# Uruchomienie silnika klastrowania dla wybranej metody (funkcja pomocnicza do masowego rankingu)
+# Globalna funkcja wykonawcza silnika klastrowania
 def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3):
     if nazwa_metody == "K-means":
         return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(dane) + 1
     elif "Konsensusowe" in nazwa_metody:
         N = dane.shape[0]
         matrix = np.zeros((N, N))
-        p1 = KMeans(n_clusters=k_grup, random_state=1, n_init=2).fit_predict(dane)
-        p2 = GaussianMixture(n_components=k_grup, random_state=2, n_init=1).fit_predict(dane)
-        p3 = SpectralClustering(n_clusters=k_grup, random_state=3, assign_labels='discretize').fit_predict(dane)
+        p1 = KMeans(n_clusters=k_grup, random_state=42, n_init=2).fit_predict(dane)
+        p2 = GaussianMixture(n_components=k_grup, random_state=42, n_init=1).fit_predict(dane)
+        p3 = SpectralClustering(n_clusters=k_grup, random_state=42, assign_labels='discretize').fit_predict(dane)
         p4 = fcluster(linkage(dane, method='ward'), t=k_grup, criterion='maxclust') - 1
         for p in [p1, p2, p3, p4]:
             for i in range(N):
@@ -209,12 +231,8 @@ def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3):
     else:
         return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(dane) + 1
 
-# Konfiguracja strony Streamlit
-st.set_page_config(page_title="Analizator Krzywych Pro AI", layout="wide")
-st.title("📊 Interaktywny Analizator Krzywych AI Pro")
-
 # =================================================================
-# SEKCJA INTERFEJSU WGRYWANIA DANYCH
+# SEKCJA INTERFEJSU UŻYTKOWNIKA (UI) STREAMLIT
 # =================================================================
 st.write("### ⚙️ Ustawienia analizy")
 typ_zrodla = st.radio("Wybierz źródło danych:", ["Plik Excel (.xlsx)", "Link do Google Sheets"], horizontal=True)
@@ -239,38 +257,29 @@ if df is not None:
         krzywe = df.iloc[:, 1:]
         nazwy_krzywych = krzywe.columns.tolist()
         
-        # Budowanie stabilnej listy metod
         lista_metod = ["K-means", "Klastrowanie Konsensusowe (Ensemble Voting)", "PSO (Optymalizacja Rojem Cząstek)", "NMF (Nieujemna Faktoryzacja Macierzy)", "GMM (Probabilistyczna)", "BGMM (Bayesowski GMM)", "Hierarchiczna Aglomeracyjna (metoda Warda)", "Hierarchiczna Korelacyjna (metoda średnich)", "HDBSCAN (Gęstościowa - Auto K)", "Spectral Clustering"]
         if tslearn_dostepne: lista_metod.append("K-Shape (Kształt fali)")
         if pytorch_dostepne: lista_metod.extend(["DEC (Głębokie Uczenie - Sieć Neuronowa)", "ADEC (Adwersarialne Głębokie Uczenie)", "RDEC (Regularizowane Głębokie Uczenie)", "ADClust (Automatyczne Głębokie Uczenie)"])
 
-        # Layout na 3 kolumny parametrów sterujących
         col_param1, col_param2, col_param3 = st.columns(3)
         with col_param1: metoda = st.selectbox("Wybierz metodę główną:", lista_metod, key="wybrana_metoda", help=OPISY_METOD.get(st.session_state.wybrana_metoda, ""))
         with col_param2: optymalizacja = st.selectbox("Wybierz wstępne przygotowanie danych:", ["Standardowa", "Analiza trendu", "FeatureExtraction", "MinMaxScaler", "Filtrowanie szumów"]) if "K-Shape" not in metoda and "DEC" not in metoda and "RDEC" not in metoda and "ADClust" not in metoda and "NMF" not in metoda else "Standardowa"
         with col_param3: liczba_grup = st.slider("Minimalna wielkość grupy (HDBSCAN):" if "HDBSCAN" in metoda else "Maksymalna liczba grup (BGMM):" if "BGMM" in metoda else "Liczba grup (K):", min_value=2, max_value=10, value=5) if "ADClust" not in metoda else 5
 
-        # =================================================================
-        # REWOLUCJA LOGISTYCZNA: EDYTOR EXPERT GROUND TRUTH NA EKRANIE
-        # =================================================================
         st.write("---")
         col_main, col_sidebar = st.columns([3, 1])
         
         with col_sidebar:
             st.markdown("### 👩‍🔬 Osąd Prowadzącego Doświadczenie")
-            st.caption("Wpisz litery (a, b, c, d, e...) odpowiadające rzeczywistym grupom krzywych wg Twojej wiedzy naukowej:")
-            
-            # Tworzymy domyślny słownik mapowania w sesji, by nie resetować zmian użytkownika
+            st.caption("Wpisz litery (a, b, c, d, e...) odpowiadające rzeczywistym grupom krzywych wg Twojej wiedzy:")
             if 'expert_dict' not in st.session_state or len(st.session_state.expert_dict) != len(nazwy_krzywych):
                 st.session_state.expert_dict = pd.DataFrame({"Krzywa": nazwy_krzywych, "Grupa Eksperta": ["a"] * len(nazwy_krzywych)})
             
-            # Wywołanie interaktywnego Streamlit Data Editor
             edited_gt = st.data_editor(st.session_state.expert_dict, use_container_width=True, hide_index=True, disabled=["Krzywa"])
             st.session_state.expert_dict = edited_gt
             etykiety_eksperta = edited_gt["Grupa Eksperta"].astype(str).tolist()
 
         with col_main:
-            # Opisy teoretyczne w expanderze
             with st.expander("📚 Kompleksowy Opis Metodologiczny (Teoria & Synergia)", expanded=True):
                 c_d1, c_d2 = st.columns(2)
                 with c_d1:
@@ -280,9 +289,7 @@ if df is not None:
                     st.markdown(f"#### ⚙️ Obróbka Wstępna: `{optymalizacja}`")
                     st.write(OPISY_PREPROCESSING.get(optymalizacja, ""))
 
-            # =================================================================
             # PRZETWARZANIE OBRÓBKI MATEMATYCZNEJ SYGNAŁU
-            # =================================================================
             if optymalizacja == "Analiza trendu":
                 dane_do_algorytmu = StandardScaler().fit_transform(krzywe.diff(axis=0).fillna(0).T)
             elif optymalizacja == "FeatureExtraction":
@@ -314,20 +321,16 @@ if df is not None:
             else:
                 dane_do_algorytmu = StandardScaler().fit_transform(krzywe.T)
 
-            # Uruchomienie wybranej metody głównej
             numery_grup = uruchom_silnik_klastrowania(metoda, dane_do_algorytmu, liczba_grup, liczba_grup)
 
-            # Wyliczenie aktualnych miar dopasowania eksperckiego w %
             ari_score = adjusted_rand_score(etykiety_eksperta, numery_grup) * 100
             nmi_score = normalized_mutual_info_score(etykiety_eksperta, numery_grup) * 100
             
-            # Wyświetlenie dużych wskaźników KPI skuteczności na ekranie
             st.markdown(f"### 🎯 Skuteczność dopasowania do kryteriów Prowadzącego:")
             kpi_ari, kpi_nmi = st.columns(2)
-            kpi_ari.metric("Indeks ARI (Zgodność par obiektów)", f"{ari_score:.1f}%", help="100% oznacza identyczną strukturę klastrów jak osąd Prowadzącego.")
-            kpi_nmi.metric("Indeks NMI (Zbieżność informacji sygnału)", f"{nmi_score:.1f}%", help="Pokazuje ile informacji o Twoim podziale odgadła sieć/algorytm.")
+            kpi_ari.metric("Indeks ARI (Zgodność par obiektów)", f"{ari_score:.1f}%")
+            kpi_nmi.metric("Indeks NMI (Zbieżność informacji sygnału)", f"{nmi_score:.1f}%")
 
-            # Wykres i Tabela Wyników dla metody głównej
             wyniki = pd.DataFrame({'Krzywa': nazwy_krzywych, 'Numer Grupy': numery_grup}).sort_values(by='Numer Grupy')
             fig, ax = plt.subplots(figsize=(10, 4.5))
             cmap = plt.get_cmap('tab10')
@@ -340,39 +343,28 @@ if df is not None:
             st.pyplot(fig)
             plt.close(fig)
 
-        # =================================================================
-        # AUTOMATYCZNY TABELA LIDERÓW (LEADERBOARD) - PORÓWNANIE METOD
-        # =================================================================
+        # AUTOMATYCZNY RANKING METOD (LEADERBOARD)
         st.write("---")
         st.subheader("🏆 Automatyczny Ranking Skuteczności Algorytmów AI")
-        
         tryb_porownania = st.radio("Wybierz tryb zestawienia rankingu:", ["Porównaj WSZYSTKIE dostępne metody chmury", "Wybierz tylko określone metody do porównania"], horizontal=True)
-        
         metody_do_testu = lista_metod if "WSZYSTKIE" in tryb_porownania else st.multiselect("Zaznacz metody, które chcesz poddać testowi rywalizacji:", lista_metod, default=lista_metod[:3])
         
         if st.button("🚀 Uruchom Wielki Turniej Algorytmów AI") and len(metody_do_testu) > 0:
             rekordy_rankingu = []
             pasek_postepu = st.progress(0)
-            
             for idx, m_nazwa in enumerate(metody_do_testu):
                 try:
                     pred_etykiety = uruchom_silnik_klastrowania(m_nazwa, dane_do_algorytmu, liczba_grup, liczba_grup)
                     m_ari = adjusted_rand_score(etykiety_eksperta, pred_etykiety) * 100
                     m_nmi = normalized_mutual_info_score(etykiety_eksperta, pred_etykiety) * 100
-                    rekordy_rankingu.append({
-                        "Algorytm AI": m_nazwa,
-                        "Zgodność ARI (%)": round(m_ari, 2),
-                        "Zbieżność Informacji NMI (%)": round(m_nmi, 2),
-                        "Średnia Skuteczność (%)": round((m_ari + m_nmi) / 2, 2)
-                    })
+                    rekordy_rankingu.append({"Algorytm AI": m_nazwa, "Zgodność ARI (%)": round(m_ari, 2), "Zbieżność Informacji NMI (%)": round(m_nmi, 2), "Średnia Skuteczność (%)": round((m_ari + m_nmi) / 2, 2)})
                 except Exception: pass
                 pasek_postepu.progress((idx + 1) / len(metody_do_testu))
-            
             df_leaderboard = pd.DataFrame(rekordy_rankingu).sort_values(by="Średnia Skuteczność (%)", ascending=False).reset_index(drop=True)
             df_leaderboard.index += 1
             st.table(df_leaderboard)
 
-        # Sekcje podpowiedzi matematycznych (Łokieć, Silhouette, BIC, Gap)
+        # Sekcje podpowiedzi matematycznych
         if "HDBSCAN" not in metoda and "ADClust" not in metoda:
             with st.expander("🔍 Zaawansowana Podpowiedź Matematyczna (Dobór liczby klastrów K)", expanded=False):
                 t_elb, t_sil, t_bic, t_gap = st.tabs(["📐 Metoda Łokcia & Kneedle", "👤 Silhouette Score", "🔮 Indeks BIC", "📊 Statystyka Gap"])
@@ -418,6 +410,8 @@ if df is not None:
                     ax_g1.plot(z_k, np.mean(log_Wk_ref, axis=0), 'co-', label='Szum')
                     ax_g1.plot(z_k, log_Wk, 'yo-', label='Dane')
                     ax_g2.errorbar(z_k, gaps, yerr=sk, fmt='mo-')
-                    st.pyplot(fig_gap_dual if 'fig_gap_dual' in locals() else fig_g); plt.close()
+                    st.pyplot(fig_g); plt.close()
 
     except Exception as ob_blad: st.error(f"Błąd krytyczny aplikacji: {ob_blad}")
+else:
+    st.info("💡 Aby rozpocząć, wgraj plik z dysku lub wklej link do Google Sheets powyżej.")
