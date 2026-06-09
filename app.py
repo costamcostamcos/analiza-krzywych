@@ -32,13 +32,14 @@ except ImportError:
 # SŁOWNIK INTELIGENTNYCH OPISÓW METOD KLASTERYZACJI
 # =================================================================
 OPISY_METOD = {
-    "K-means": "Dzieli przestrzeń cech na tzw. obszary Voronoia. Algorytm dąży do minimalizacji wariancji wewnątrzklastrowej poprzez naprzemienne przypisywanie obiektów do najbliższych prototypów (środków ciężkości) i aktualizację tych środków. Najlepiej sprawdza się, gdy klastry są zwarte, odizolowane i sferyczne.",
+    "K-means": "Dzieli przestrzeń cech na tzw. obszary Voronoia. Algorytm dąży to minimalizacji wariancji wewnątrzklastrowej poprzez naprzemienne przypisywanie obiektów do najbliższych prototypów (środków ciężkości) i aktualizację tych środków. Najlepiej sprawdza się, gdy klastry są zwarte, odizolowane i sferyczne.",
+    "Klastrowanie Konsensusowe (Ensemble Voting)": "Metoda komitetowa (Ensemble Learning). Uruchamia równolegle zróżnicowany zestaw algorytmów (K-Means, GMM, Spectral, Ward) i buduje 'macierz współwystępowania', rejestrującą jak często dane dwie krzywe były przypisywane do jednej grupy. Ostateczny podział jest fuzją decyzji wszystkich modeli, co daje potężną stabilność matematyczną i odporność na anomalie pojedynczych metod.",
     "PSO (Optymalizacja Rojem Cząstek)": "Metaheurystyka inspirowana naturą, imitująca zachowanie stada ptaków. Zamiast pojedynczego punktu startowego, w wielowymiarowej przestrzeni porusza się populacja (rój) cząstek-zwiadowców. Każda cząstka koryguje swój tor lotu na podstawie własnych doświadczeń oraz sukcesów całego roju, co pozwala skutecznie omijać lokalne minima matematyczne.",
     "NMF (Nieujemna Faktoryzacja Macierzy)": "Algorytm nieliniowej redukcji wymiarowości, który rozkłada macierz danych na iloczyn dwóch macierzy o elementach wyłącznie nieujemnych. Traktuje Twoje krzywe jako kombinację liniową bazowych, nieujemnych 'klocków' sygnałowych. Przypisanie do grupy następuje na podstawie dominującego komponentu fizycznego, co eliminuje nienaturalne matematycznie wartości ujemne.",
     "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich. Zakłada, że struktura danych pod wejściem składa się z określonej liczby wielowymiarowych rozkładów normalnych. Realizuje tzw. 'miękkie przypisanie' (soft clustering) – zamiast suchej decyzji 0/1, wylicza procentową pewność (prawdopodobieństwo), z jaką dana krzywa pasuje do każdego z klastrów. Idealne do identyfikacji próbek granicznych.",
     "BGMM (Bayesowski GMM)": "Rozszerzenie GMM o probabilistyczną Bayesowską z procesem Dirichleta. Traktuje parametry klastrów jako zmienne losowe. Posiada unikalną inżynierską zaletę: jeśli zadana maksymalna liczba grup jest zbyt duża, algorytm automatycznie wygasza niepotrzebne klastry (przypisuje im wagę bliską zeru), chroniąc model przed przeuczeniem na małych zbiorach danych.",
     "Hierarchiczna Aglomeracyjna (metoda Warda)": "Algorytm budujący drzewo powiązań od dołu do góry. Każda krzywa startuje jako osobny klaster, a w kolejnych krokach łączone są grupy, które generują najmniejszy możliwy wzrost całkowitej wariancji wewnątrzklastrowej (błędu SSE). Wynik końcowy w postaci dendrogramu pozwala na pełną ocenę struktury pokrewieństwa sygnałów.",
-    "Hierarchiczna Korelacyjna (metoda średnich)": "Podejście hierarchiczne (UPGMA), które zamiach klasycznej odległości przestrzennej (metryki Euklidesowej) mierzy stopień współliniowości wykresów za pomocą odległości korelacyjnej (1 - r Pearsona). Łączy grupy na podstawie średnich powiązań, skupiając się wyłącznie na synchroniczności trendów i kształcie fali, ignorując skalę i przesunięcia pionowe Y.",
+    "Hierarchiczna Korelacyjna (metoda średnich)": "Podejście hierarchiczne (UPGMA), które zamiast klasycznej odległości przestrzennej (metryki Euklidesowej) mierzy stopień współliniowości wykresów za pomocą odległości korelacyjnej (1 - r Pearsona). Łączy grupy na podstawie średnich powiązań, skupiając się wyłącznie na synchroniczności trendów i kształcie fali, ignorując skalę i przesunięcia pionowe Y.",
     "HDBSCAN (Gęstościowa - Auto K)": "Zaawansowane klastrowanie gęstościowe oparte na teorii grafów. Szuka obszarów o wysokiej kondensacji punktów oddzielonych strefami pustki. Nie wymaga definiowania liczby klastrów (K). Krzywe nietypowe lub zaszumione są automatycznie odrzucane i oznaczane jako grupa 0, dzięki czemu nie zaburzają one czystości głównych profili.",
     "Spectral Clustering": "Wykorzystuje wartości własne (widmo) macierzy podobieństwa danych do redukcji wymiarowości przed właściwym podziałem. Buduje graf powiązań między wszystkimi krzywymi i szuka optymalnych cięć topologicznych tego grafu. Genialnie radzi sobie z układami nieliniowymi i strukturami zagnieżdżonymi wewnątrz siebie.",
     "K-Shape (Kształt fali)": "Wyspecjalizowany algorytm stworzony ściśle do analizy kształtu serii czasowych. Wykorzystuje znormalizowaną korelację wzajemną (cross-correlation) jako miarę odległości geometrycznej. Potrafi rozpoznać, że dwie linie mają ten sam kształt, nawet jeśli ich piki charakterystyczne są przesunięte w czasie (w lewo lub w prawo).",
@@ -54,7 +55,7 @@ OPISY_METOD = {
 OPISY_PREPROCESSING = {
     "Standardowa": "Polega na klasycznej standaryzacji (Z-score). Od każdej wartości punktu odejmowana jest średnia danej kolumny, a wynik dzielony jest przez jej odchylenie standardowe. Sprowadza to wszystkie punkty pomiarowe krzywych do wspólnej skali statystycznej (średnia=0, odchylenie=1), eliminując sytuację, w której bezwzględna wartość sygnału dominuje nad jego dynamiką.",
     "Analiza trendu": "Wyznacza różnice skończone (pochodne pierwszego rzędu) pomiędzy sąsiednimi punktami wzdłuż osi X (`y_next - y_current`), a następnie poddaje je standaryzacji. Transformacja ta przenosi analizę w obszar czystej dynamiki linii. Algorytmy badają prędkość narastania i opadania sygnału (nachylenie zboczy), całkowicie ignorując pozycję wykresów w pionie.",
-    "FeatureExtraction": "Głęboka transformacja inżynierska. Zamiast surowych setek punktów, każda krzywa opisywana jest przez 9 zaawansowanych deskryptorów: wartość maksymalną, pozycję piku X, średnią, odchylenie standardowe, skośność (asymetrię fali), kurtozę (strzelistość pików) oraz amplitudy pierwszych 3 głównych składowych harmonicznych uzyskanych z Szybkiej Transformaty Fouriera (FFT). Pozwala algorytmom badać sygnał w dziedzinie częstotliwości.",
+    "FeatureExtraction": "Głęboka transformacja inżynierska. Zamiast surowych setek punktów, każda krzywa opisywana jest przez 9 zaawansowanych deskryptorów: wartość maksymalną, pozycję piku X, średnią, odchylenie standardowe, skośność (asymetrię fali), kurtoza (strzelistość pików) oraz amplitudy pierwszych 3 głównych składowych harmonicznych uzyskanych z Szybkiej Transformaty Fouriera (FFT). Pozwala algorytmom badać sygnał w dziedzinie częstotliwości.",
     "MinMaxScaler": "Dokonuje liniowej transformacji danych, przesuwając i skalując wartości każdej krzywej tak, aby zamknęły się w ścisłym, znormalizowanym przedziale od 0 do 1. Metoda ta zachowuje oryginalne proporcje amplitud i jest bezwzględnie wymagana przez algorytmy takie jak NMF, które matematycznie nie tolerują wartości ujemnych.",
     "Filtrowanie szumów": "Wykorzystuje algorytm kroczącego okna średniej (`rolling window`) o zadanym rozmiarze, centrując wynik. Każdy punkt wykresu zastępowany jest średnią arytmetyczną z jego bezpośredniego otoczenia. Operacja ta skutecznie odcina fluktuacje wysokiej częstotliwości, przypadkowe szpilki pomiarowe i zakłócenia aparatury, wygładzając nadrzędny profil fali."
 }
@@ -255,6 +256,7 @@ if df is not None:
         
         lista_metod = [
             "K-means", 
+            "Klastrowanie Konsensusowe (Ensemble Voting)",
             "PSO (Optymalizacja Rojem Cząstek)",
             "NMF (Nieujemna Faktoryzacja Macierzy)",
             "GMM (Probabilistyczna)", 
@@ -289,7 +291,7 @@ if df is not None:
             if "K-Shape" not in metoda and "DEC" not in metoda and "RDEC" not in metoda and "ADClust" not in metoda and "NMF" not in metoda:
                 optymalizacja = st.selectbox(
                     "Wybierz wstępne przygotowanie danych:", 
-                    ["Standardowa", "Analiza trendu", "FeatureExtraction", "MinMaxScaler", "Filtrowmodify Szumów"]
+                    ["Standardowa", "Analiza trendu", "FeatureExtraction", "MinMaxScaler", "Filtrowanie szumów"]
                 )
             else:
                 optymalizacja = "Standardowa"
@@ -357,6 +359,43 @@ if df is not None:
         if metoda == "K-means":
             model = KMeans(n_clusters=liczba_grup, random_state=42, n_init=10)
             numery_grup = model.fit_predict(dane_do_algorytmu) + 1
+            
+        elif "Konsensusowe" in metoda:
+            with st.spinner("🤝 Trwa budowanie macierzy współwystępowania (Consensus Matrix) przez komitet modeli..."):
+                N = dane_do_algorytmu.shape[0]
+                macierz_konsensusu = np.zeros((N, N))
+                
+                # Definiujemy zróżnicowane algorytmy bazowe
+                m1 = KMeans(n_clusters=liczba_grup, random_state=1, n_init=5)
+                m2 = GaussianMixture(n_components=liczba_grup, random_state=2, n_init=2)
+                m3 = SpectralClustering(n_clusters=liczba_grup, random_state=3, assign_labels='discretize')
+                m4_link = linkage(dane_do_algorytmu, method='ward')
+                
+                # Wyciągamy predykcje z każdego modelu
+                p1 = m1.fit_predict(dane_do_algorytmu)
+                p2 = m2.fit_predict(dane_do_algorytmu)
+                p3 = m3.fit_predict(dane_do_algorytmu)
+                p4 = fcluster(m4_link, t=liczba_grup, criterion='maxclust') - 1
+                
+                wszystkie_predykcje = [p1, p2, p3, p4]
+                
+                # Budowanie macierzy ko-asocjacyjnej
+                for pred in wszystkie_predykcje:
+                    for i in range(N):
+                        for j in range(N):
+                            if pred[i] == pred[j]:
+                                macierz_konsensusu[i, j] += 1
+                                
+                # Normalizacja macierzy do przedziału [0, 1] (prawdopodobieństwo konsensusu)
+                macierz_konsensusu /= len(wszystkie_predykcje)
+                
+                # Odległość konsensusowa = 1 - prawdopodobieństwo wspólnego klastra
+                macierz_odleglosci = 1.0 - macierz_konsensusu
+                
+                # Finalna fuzja hierarchiczna na bazie macierzy odległości konsensusowej
+                finalne_linkage = linkage(macierz_odleglosci, method='average')
+                numery_grup = fcluster(finalne_linkage, t=liczba_grup, criterion='maxclust')
+                
         elif "PSO" in metoda:
             with st.spinner("🐝 Trwa symulacja lotu roju cząstek (PSO)..."):
                 model_pso = PSOClustering(n_clusters=liczba_grup, random_state=42)
@@ -384,7 +423,6 @@ if df is not None:
                     n_init=5
                 )
                 numery_grup = model_bgmm.fit_predict(dane_do_algorytmu) + 1
-            
         elif "metoda Warda" in metoda:
             powiazania = linkage(dane_do_algorytmu, method='ward')
             numery_grup = fcluster(powiazania, t=liczba_grup, criterion='maxclust')
@@ -403,7 +441,7 @@ if df is not None:
             model = KShape(n_clusters=liczba_grup, random_state=42)
             numery_grup = model.fit_predict(dataset) + 1
         elif "DEC" in metoda:
-            with st.spinner("🧠 🧠 Trwa matematyczna augmentacja danych (44 -> 2200) oraz głęboki trening DEC..."):
+            with st.spinner("🧠 Trwa matematyczna augmentacja danych (44 -> 2200) oraz głęboki trening DEC..."):
                 X_augmented = augmentuj_dane(dane_do_algorytmu, czynniki_kopii=50)
                 X_aug_tensor = torch.FloatTensor(X_augmented)
                 X_orig_tensor = torch.FloatTensor(dane_do_algorytmu)
@@ -430,12 +468,11 @@ if df is not None:
                 model_dec = KMeans(n_clusters=liczba_grup, random_state=42, n_init=10)
                 numery_grup = model_dec.fit_predict(dane_skalowane_przez_siec) + 1
         elif "ADEC" in metoda:
-            with st.spinner("⚔️ ⚔️ Trwa pojedynek sieci GAN na rozbudowanym zbiorze 2200 krzywych..."):
+            with st.spinner("⚔️ Trwa pojedynek sieci GAN na rozbudowanym zbiorze 2200 krzywych..."):
                 X_augmented = augmentuj_dane(dane_do_algorytmu, czynniki_kopii=50)
                 X_aug_tensor = torch.FloatTensor(X_augmented)
                 X_orig_tensor = torch.FloatTensor(dane_do_algorytmu)
                 
-                N_samples = X_augmented.shape[0]
                 input_dim = dane_do_algorytmu.shape[1]
                 latent_dim = 4
                 autoencoder = AutoencoderKrzywych(input_dim=input_dim, latent_dim=latent_dim)
@@ -478,7 +515,7 @@ if df is not None:
                 model_adec = KMeans(n_clusters=liczba_grup, random_state=42, n_init=10)
                 numery_grup = model_adec.fit_predict(dane_oczyszczone_adec) + 1
         elif "RDEC" in metoda:
-            with st.spinner("🛡️ 🛡️ Trwa trening RDEC z barierą L2 zasilany bazą 2200 prób..."):
+            with st.spinner("🛡️ Trwa trening RDEC z barierą L2 zasilany bazą 2200 prób..."):
                 X_augmented = augmentuj_dane(dane_do_algorytmu, czynniki_kopii=50)
                 X_aug_tensor = torch.FloatTensor(X_augmented)
                 X_orig_tensor = torch.FloatTensor(dane_do_algorytmu)
@@ -507,7 +544,7 @@ if df is not None:
                 model_rdec = KMeans(n_clusters=liczba_grup, random_state=42, n_init=10)
                 numery_grup = model_rdec.fit_predict(dane_stabilne_rdec) + 1
         elif "ADClust" in metoda:
-            with st.spinner("🤖 🤖 Trwa automatyczne szukanie K i trening sieci na 2200 krzywych..."):
+            with st.spinner("🤖 Trwa automatyczne szukanie K i trening sieci na 2200 krzywych..."):
                 X_augmented = augmentuj_dane(dane_do_algorytmu, czynniki_kopii=50)
                 X_aug_tensor = torch.FloatTensor(X_augmented)
                 X_orig_tensor = torch.FloatTensor(dane_do_algorytmu)
