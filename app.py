@@ -71,7 +71,7 @@ class SiecSOM:
 # SŁOWNIK INTELIGENTNYCH OPISÓW METOD KLASTERYZACJI
 # =================================================================
 OPISY_METOD = {
-    "Hierarchiczna Aglomeracyjna (metoda Warda)": "Twój obecny faworyt (82% ARI). Buduje drzewo powiązań od dołu do góry na podstawie minimalizacji przyrostu wariancji wewnątrzklastrowej. Doskonale radzi sobie ze zwartymi grupami.",
+    "Hierarchiczna Aglomeracyjna (metoda Warda)": "Buduje drzewo powiązań od dołu do góry na podstawie minimalizacji przyrostu wariancji wewnątrzklastrowej. Doskonale radzi sobie ze zwartymi grupami.",
     "Filtrowanie szumów (Rolling Mean) + Hierarchiczna (metoda Warda)": "Liniowa transformacja wygładzająca. Algorytm najpierw aplikuje okno kroczącej średniej (rolling mean), usuwając szum pomiarowy wysokiej częstotliwości z serii czasowej, a następnie grupuje klastry metodą Warda.",
     "PCA + Hierarchiczna (metoda Warda)": "Hybryda redukująca szum. Wyciąga kluczowe składowe sygnału (PCA), odrzucając drobne fluktuacje laboratoryjne, a następnie aplikuje kryterium Warda.",
     "UMAP + Hierarchiczna (metoda Warda)": "Potężna fuzja nieliniowa. UMAP makroskopowo zagęszcza i zbliża do siebie pokrewne profile krzywych w przestrzeni topologicznej, pozwalając metodzie Warda na bezbłędne wycięcie klastrów.",
@@ -80,10 +80,10 @@ OPISY_METOD = {
     "K-means": "Dzieli przestrzeń cech na tzw. obszary Voronoia. Algorytm dąży do minimalizacji wariancji wewnątrzklastrowej.",
     "UMAP + HDBSCAN (Hybryda Gęstościowa)": "Dwustopniowa hybryda nowej generacji. Najpierw rzutuje sygnał do przestrzeni topologicznej nieliniowej 2D (UMAP), a algorytm gęstościowy (HDBSCAN) wycina z nich grupy kształtów.",
     "Spectral + GMM (Hybryda Spektralno-Probabilistyczna)": "Mapuje powiązania grafowe poprzez dekompozycję wartości własnych, a następnie dopasowuje do nich elastyczne chmury probabilistyczne rozkładu normalnego (GMM).",
-    "SOM + K-means (Hybryda sekwencyjna)": "Pierwszy etap wykorzystuje sieć neuronową Kohonena (SOM) do kompresji sygnału na siatkę topologiczna. Drugi etap uruchamia algorytm K-means na wagach neuronów.",
+    "SOM + K-means (Hybryda sekwencyjna)": "Pierwszy etap wykorzystuje sieć neuronową Kohonena (SOM) do kompresji sygnału na siatkę topologiczną. Drugi etap uruchamia algorytm K-means na wagach neuronów.",
     "Klastrowanie Konsensusowe (Ensemble Voting)": "Metoda komitetowa. Uruchamia równolegle K-Means, GMM, Spectral, Ward i buduje macierz współwystępowania. Ostateczny podział jest fuzją decyzji wszystkich modeli.",
     "NMF (Nieujemna Faktoryzacja Macierzy)": "Rozkłada macierz danych na iloczyn dwóch macierzy o elementach wyłącznie nieujemnych.",
-    "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich (ok. 60% ARI). Próbuje dopasować elastyczne rozkłady normalne, dając miękkie przypisanie probabilistyczne.",
+    "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich. Próbuje dopasować elastyczne rozkłady normalne, dając miękkie przypisanie probabilistyczne.",
     "BGMM (Bayesowski GMM)": "Rozszerzenie GMM o probabilistyczną Bayesowską z procesem Dirichleta. Automatycznie wygasza niepotrzebne klastry.",
     "Hierarchiczna Korelacyjna (metoda średnich)": "Podejście hierarchiczne, które mierzy stopień współliniowości wykresów za pomocą odległości korelacyjnej (1 - r Pearsona).",
     "HDBSCAN (Gęstościowa - Auto K)": "Zaawansowane klastrowanie gęstościowe oparte na teorii grafów. Szuka obszarów o wysokiej kondensacji punktów.",
@@ -95,7 +95,7 @@ OPISY_METOD = {
 # SŁOWNIK OPISÓW WSTĘPNEGO PRZYGOTOWANIA DANYCH
 # =================================================================
 OPISY_PREPROCESSING = {
-    "Standardowa": "Polega na klasycznej standaryzacji (Z-score). Sprowadza wszystkie punkty pomiarowe krzywych do wspólnej skali statystycznej (miejsce zerowe średniej).",
+    "Standardowa": "Polega na klasycznej standaryzacji (Z-score). Sprowadza wszystkie punkty pomiarowe krzywych do wspólnej skali statystycznej.",
     "Analiza trendu": "Wyznacza różnice skończone (pochodne pierwszego rzędu) pomiędzy sąsiednimi punktami wzdłuż osi X.",
     "UMAP (Redukcja topologiczna)": "Uniform Manifold Approximation and Projection. Zaawansowana, nieliniowa redukcja wymiarowości.",
     "FeatureExtraction": "Głęboka transformacja inżynierska 3D: Max, Pozycja X, Średnia, Std, Skośność, Kurtoza, harmoniczne FFT oraz wskaźniki DWT Haar.",
@@ -207,8 +207,10 @@ def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3, df_sy
         return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(dane) + 1
 
 # =================================================================
-# GŁÓWNA INICJALIZACJA INTERFEJSU
+# SEKCJA INTERFEJSU UŻYTKOWNIKA (UI) STREAMLIT
 # =================================================================
+st.title("📊 Interaktywny Analizator Krzywych AI Pro")
+
 st.write("### Ustawienia analizy")
 typ_zrodla = st.radio("Wybierz źródło danych:", ["Plik Excel (.xlsx)", "Link do Google Sheets"], horizontal=True)
 
@@ -242,6 +244,7 @@ else:
             elif len(sheets_dict) > 1: df_expert_raw = sheets_dict[list(sheets_dict.keys())[1]]
         except Exception: st.error("Nie udało się pobrać danych ze struktur Google Sheets.")
 
+# BEZPIECZNIK STARTOWY: Renderuj resztę interfejsu TYLKO gdy plik został pomyślnie załadowany
 if df is not None:
     try:
         x = df.iloc[:, 0]
@@ -277,7 +280,7 @@ if df is not None:
             st.session_state.wybrana_metoda = lista_metod[0]
 
         col_param1, col_param2, col_param3 = st.columns(3)
-        with col_param1: metoda = st.selectbox("Wybierz metodę główną:", lista_metod, key="wybrana_metoda")
+        with col_param1: metoda = st.selectbox("Wybierz metoda główna:", lista_metod, key="wybrana_metoda")
         with col_param2: optymalizacja = st.selectbox("Wybierz wstępne przygotowanie danych:", lista_preprocessingow) if "K-Shape" not in metoda and "UMAP + HDBSCAN" not in metoda and "UMAP + Hierarchiczna" not in metoda else "Standardowa"
         with col_param3: liczba_grup = st.slider("Minimalna wielkość grupy (HDBSCAN):" if "HDBSCAN" in metoda or "UMAP + HDBSCAN" in metoda else "Maksymalna liczba grup (BGMM):" if "BGMM" in metoda else "Liczba grup (K):", min_value=2, max_value=10, value=5)
 
@@ -328,7 +331,7 @@ if df is not None:
             etykiety_eksperta = edited_gt["Grupa Eksperta"].astype(str).tolist()
 
         with col_main:
-            with st.expander("Kompleksowy Opis Metodologiczny (Teoria & Synergia Operacyjna)", expanded=True):
+            with st.expander("Kompleksowy Opis Metodologiczny", expanded=True):
                 c_d1, c_d2 = st.columns(2)
                 with c_d1:
                     st.markdown(f"#### Algorytm Główny: `{metoda}`")
@@ -431,12 +434,12 @@ if df is not None:
                         with col_ui:
                             if k_id == 0:
                                 st.markdown(f"**⚪ Szum / Odrzuty**")
-                                st.caption(f"Liczba krzywych: {len(klastry_slownik[k_id])}")
+                                st.caption(f"Liczba: {len(klastry_slownik[k_id])}")
                                 st.code(", ".join(klastry_slownik[k_id]), language="text")
                             else:
                                 n_koloru = NAZWY_KOLOROW[(k_id - 1) % 10]
                                 st.markdown(f"**🔹 Klaster {k_id}** ({n_koloru})")
-                                st.caption(f"Liczba krzywych: {len(klastry_slownik[k_id])}")
+                                st.caption(f"Liczba: {len(klastry_slownik[k_id])}")
                                 st.code(", ".join(klastry_slownik[k_id]), language="text")
                 st.write("---")
 
@@ -514,6 +517,6 @@ if df is not None:
         df_leaderboard.index += 1
         st.table(df_leaderboard)
 
-    except Exception as ob_blad: st.error(f"Błąd podczas renderowania: {ob_blad}")
+    except Exception as ob_blad: st.error(f"Błąd krytyczny podczas renderowania: {ob_blad}")
 else:
     st.info("Aby rozpocząć, wgraj plik z dysku lub wklej link do Google Sheets powyżej.")
