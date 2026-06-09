@@ -50,7 +50,7 @@ OPISY_METOD = {
     "Spectral Clustering": "Wykorzystuje wartości własne (widmo) macierzy podobieństwa danych do redukcji wymiarowości przed właściwym podziałem. Buduje graf powiązań między wszystkimi krzywymi.",
     "K-Shape (Kształt fali)": "Wyspecjalizowany algorytm stworzony ściśle do analizy kształtu serii czasowych. Wykorzystuje znormalizowaną korelację wzajemną. Rozpoznaje kształt fali przesuniętej w czasie.",
     "DEC (Głębokie Uczenie - Sieć Neuronowa)": "Sztuczna sieć neuronowa (Autoenkoder) szkolona na bazie danych namnożonej przez augmentację sygnału (z 44 do 2200 krzywych).",
-    "ADEC (Adwersarialne Głębokie Uczenie)": "Pojedynek adwersarialny enkodera i dyskryminatora zasilany sztucznie namnożonym zbiorem danych (2200 prób). Wymusza ostre i bardzo zwarte granice między grupami, całkowicie zapobiegając przeuczeniu.",
+    "ADEC (Adwersarialne Głębokie Uczenie)": "Pojedynek adwersarialny enkodera i dyskryminatora zasilany sztucznie namnożonym zbiorem danych (2200 prób). Wymusza ostre i bardzo zwarte granice między grupami, całkowicie zapobieganiega przeuczeniu.",
     "RDEC (Regularizowane Głębokie Uczenie)": "Model DEC wyposażony w silne bariery regularyzacyjne (L2) oraz zaawansowany moduł augmentacji sygnału. Zmusza sieć neuronową do szukania najprostszych, najbardziej powtarzalnych wzorców geometrycznych fal.",
     "ADClust (Automatyczne Głębokie Uczenie)": "Autonomiczny kombajn AI, który sam decyduje o liczbie grup za pomocą wskaźnika Silhouette, wykonując uprzednio proces głębokiego uczenia na 2200 wygenerowanych matematycznie wariantach."
 }
@@ -238,27 +238,37 @@ def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3):
         return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(dane) + 1
 
 # =================================================================
-# GŁÓWNY RDZEŃ WYKONAWCZY INTERFEJSU
+# SEKCJA INTERFEJSU UŻYTKOWNIKA (UI) STREAMLIT
 # =================================================================
-st.title("📊 Interaktywny Analizator Krzywych AI Pro")
-st.write("Wgraj plik Excel lub wklej link do Google Sheets. System automatycznie dopasuje metody sztucznej inteligencji.")
-
 st.write("### Ustawienia analizy")
 typ_zrodla = st.radio("Wybierz źródło danych:", ["Plik Excel (.xlsx)", "Link do Google Sheets"], horizontal=True)
 
 df = None
+df_expert_raw = None
+
 if typ_zrodla == "Plik Excel (.xlsx)":
     uploaded_file = st.file_uploader("Wgraj plik Excel", type=["xlsx"])
     if uploaded_file is not None:
-        df_raw = pd.read_excel(uploaded_file, header=None)
+        # Odczyt Arkusza 1 (Krzywe sygnałowe)
+        df_raw = pd.read_excel(uploaded_file, sheet_name=0, header=None)
         df = inteligentne_pobranie_tabeli(df_raw)
+        
+        # NOWOŚĆ: Próba bezpiecznego pobrania Spodziewanego Podziału z drugiego arkusza (index 1)
+        try:
+            df_expert_raw = pd.read_excel(uploaded_file, sheet_name=1)
+        except Exception:
+            df_expert_raw = None
 else:
     link_sheets = st.text_input("Wklej link do Google Sheets:", placeholder="https://docs.google.com/spreadsheets/d/...")
     if link_sheets and "docs.google.com/spreadsheets" in link_sheets:
         try:
-            url_eksportu = f'{link_sheets.split("/edit")[0]}/export?format=xlsx'
-            df = inteligentne_pobranie_tabeli(pd.read_excel(url_eksportu, header=None))
-        except Exception: st.error("Nie udało się pobrać danych z Google Sheets.")
+            url_base = link_sheets.split("/edit")[0]
+            # Eksport pierwszego arkusza danych pomiarowych
+            df = inteligentne_pobranie_tabeli(pd.read_excel(f"{url_base}/export?format=xlsx&gid=0", header=None))
+            # Eksport drugiego arkusza spodziewanego podziału
+            df_expert_raw = pd.read_excel(f"{url_base}/export?format=xlsx&gid=1")
+        except Exception:
+            st.error("Nie udało się pobrać danych ze struktur arkusza Google Sheets.")
 
 if df is not None:
     try:
@@ -270,18 +280,11 @@ if df is not None:
         if tslearn_dostepne: lista_metod.append("K-Shape (Kształt fali)")
         if pytorch_dostepne: lista_metod.extend(["DEC (Głębokie Uczenie - Sieć Neuronowa)", "ADEC (Adwersarialne Głębokie Uczenie)", "RDEC (Regularizowane Głębokie Uczenie)", "ADClust (Automatyczne Głębokie Uczenie)"])
 
-        # WYMUSZENIE INICJALIZACJI STANU - Zapobiega błędowi braku atrybutu podczas pierwszego ładowania
         if 'wybrana_metoda' not in st.session_state or st.session_state.wybrana_metoda not in lista_metod:
             st.session_state.wybrana_metoda = lista_metod[0]
 
         col_param1, col_param2, col_param3 = st.columns(3)
-        with col_param1: 
-            metoda = st.selectbox(
-                "Wybierz metodę główną:", 
-                lista_metod, 
-                key="wybrana_metoda", 
-                help="Wskaż algorytm uczenia maszynowego lub sieci neuronowej do podziału krzywych pomiarowych."
-            )
+        with col_param1: metoda = st.selectbox("Wybierz metodę główną:", lista_metod, key="wybrana_metoda", help=OPISY_METOD.get(st.session_state.wybrana_metoda, ""))
         with col_param2: optymalizacja = st.selectbox("Wybierz wstępne przygotowanie danych:", ["Standardowa", "Analiza trendu", "FeatureExtraction", "MinMaxScaler", "Filtrowanie szumów"]) if "K-Shape" not in metoda and "DEC" not in metoda and "RDEC" not in metoda and "ADClust" not in metoda and "NMF" not in metoda else "Standardowa"
         with col_param3: liczba_grup = st.slider("Minimalna wielkość grupy (HDBSCAN):" if "HDBSCAN" in metoda else "Maksymalna liczba grup (BGMM):" if "BGMM" in metoda else "Liczba grup (K):", min_value=2, max_value=10, value=5) if "ADClust" not in metoda else 5
 
@@ -290,10 +293,28 @@ if df is not None:
         
         with col_sidebar:
             st.markdown("### Spodziewany Podział Grup")
-            st.caption("Wpisz litery (a, b, c, d, e...) odpowiadające rzeczywistym grupom krzywych:")
-            if 'expert_dict' not in st.session_state or len(st.session_state.expert_dict) != len(nazwy_krzywych):
-                st.session_state.expert_dict = pd.DataFrame({"Krzywa": nazwy_krzywych, "Grupa Eksperta": ["a"] * len(nazwy_krzywych)})
+            st.caption("Tabela została zainicjalizowana na podstawie drugiego arkusza wprowadzonego pliku Excel. Możesz w locie modyfikować przypisania na ekranie:")
             
+            # REWOLUCJA: Logika automatycznego uzupełniania tabeli z drugiego arkusza przy zachowaniu edytowalności
+            if 'expert_dict' not in st.session_state:
+                # Jeśli wczytany plik zawiera poprawną strukturę w drugim arkuszu
+                if df_expert_raw is not None and len(df_expert_raw) >= len(nazwy_krzywych):
+                    # Oczyszczamy kolumny (szukamy nazw krzywych oraz przypisania literowego)
+                    df_expert_raw.columns = [str(c).strip() for c in df_expert_raw.columns]
+                    col_k = df_expert_raw.columns[0]
+                    col_g = df_expert_raw.columns[1]
+                    
+                    init_df = pd.DataFrame({
+                        "Krzywa": nazwy_krzywych,
+                        "Grupa Eksperta": [str(df_expert_raw[df_expert_raw[col_k] == name][col_g].values[0]).strip() if name in df_expert_raw[col_k].values else "a" for name in nazwy_krzywych]
+                    })
+                else:
+                    # Brak drugiego arkusza - stosujemy domyślną inicjalizację bezpieczną "a"
+                    init_df = pd.DataFrame({"Krzywa": nazwy_krzywych, "Grupa Eksperta": ["a"] * len(nazwy_krzywych)})
+                
+                st.session_state.expert_dict = init_df
+            
+            # Wywołanie interaktywnego Data Editora chmury
             edited_gt = st.data_editor(st.session_state.expert_dict, use_container_width=True, hide_index=True, disabled=["Krzywa"])
             st.session_state.expert_dict = edited_gt
             etykiety_eksperta = edited_gt["Grupa Eksperta"].astype(str).tolist()
@@ -308,7 +329,7 @@ if df is not None:
                     st.markdown(f"#### Obróbka Wstępna: `{optymalizacja}`")
                     st.write(OPISY_PREPROCESSING.get(optymalizacja, ""))
 
-            # SPECYFIKACJA OBRÓBKI SYGNAŁU
+            # PRZETWARZANIE DANYCH WEJŚCIOWYCH
             if optymalizacja == "Analiza trendu":
                 dane_do_algorytmu = StandardScaler().fit_transform(krzywe.diff(axis=0).fillna(0).T)
             elif optymalizacja == "FeatureExtraction":
@@ -340,7 +361,6 @@ if df is not None:
             else:
                 dane_do_algorytmu = StandardScaler().fit_transform(krzywe.T)
 
-            # WYWOŁANIE METODY GŁÓWNEJ
             numery_grup = uruchom_silnik_klastrowania(metoda, dane_do_algorytmu, liczba_grup, liczba_grup)
 
             ari_score = adjusted_rand_score(etykiety_eksperta, numery_grup) * 100
@@ -375,7 +395,7 @@ if df is not None:
             plt.close(fig)
 
         # =================================================================
-        # BEZPRZYCISKOWY RANKING SKUTECZNOŚCI ALGORYTMÓW
+        # AUTOMATYCZNY RANKING METOD
         # =================================================================
         st.write("---")
         st.subheader("Ranking Skuteczności Algorytmów")
