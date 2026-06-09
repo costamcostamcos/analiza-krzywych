@@ -10,6 +10,13 @@ from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
 import io
 import numpy as np
 
+# Bezpieczny import dla UMAP (Uniform Manifold Approximation and Projection)
+try:
+    import umap
+    umap_dostepne = True
+except ImportError:
+    umap_dostepne = False
+
 # Bezpieczny import dla zaawansowanego algorytmu K-Shape
 try:
     from tslearn.clustering import KShape
@@ -61,6 +68,7 @@ OPISY_METOD = {
 OPISY_PREPROCESSING = {
     "Standardowa": "Polega na klasycznej standaryzacji (Z-score). Sprowadza wszystkie punkty pomiarowe krzywych do wspólnej skali statystycznej (średnia=0, odchylenie=1).",
     "Analiza trendu": "Wyznacza różnice skończone (pochodne pierwszego rzędu) pomiędzy sąsiednimi punktami wzdłuż osi X. Algorytmy badają prędkość narastania i opadania sygnału.",
+    "UMAP (Redukcja topologiczna)": "Uniform Manifold Approximation and Projection. Zaawansowana, nieliniowa redukcja wymiarowości oparta na geometrii różniczkowej. Mapuje wielowymiarowe krzywe do 2 najsilniejszych składowych topologicznych, idealnie zachowując relacje globalne i lokalne.",
     "FeatureExtraction": "Głęboka transformacja inżynierska 3D: Max, Pozycja X, Średnia, Std, Skośność, Kurtoza, pierwsze 3 harmoniczne FFT oraz 3 wskaźniki DWT Haar (Aproksymacja i Detale).",
     "MinMaxScaler": "Dokonuje liniowej transformacji danych, przesuwając i skalując wartości każdej krzywej tak, aby zamknęły się w ścisłym przedziale od 0 do 1.",
     "Filtrowanie szumów": "Wykorzystuje algorytm kroczącego okna średniej (rolling window). Skutecznie odcina fluktuacje wysokiej częstotliwości i przypadkowe szpilki pomiarowe."
@@ -288,6 +296,12 @@ if df is not None:
         if tslearn_dostepne: lista_metod.append("K-Shape (Kształt fali)")
         if pytorch_dostepne: lista_metod.extend(["DEC (Głębokie Uczenie - Sieć Neuronowa)", "ADEC (Adwersarialne Głębokie Uczenie)", "RDEC (Regularizowane Głębokie Uczenie)", "ADClust (Automatyczne Głębokie Uczenie)"])
 
+        # Budowa listy preprocessingów dynamicznie na podstawie dostępności bibliotek
+        lista_preprocessingow = ["Standardowa", "Analiza trendu"]
+        if umap_dostepne:
+            lista_preprocessingow.append("UMAP (Redukcja topologiczna)")
+        lista_preprocessingow.extend(["FeatureExtraction", "MinMaxScaler", "Filtrowanie szumów"])
+
         if 'wybrana_metoda' not in st.session_state or st.session_state.wybrana_metoda not in lista_metod:
             st.session_state.wybrana_metoda = lista_metod[0]
 
@@ -299,7 +313,11 @@ if df is not None:
                 key="wybrana_metoda", 
                 help="Wskaż algorytm uczenia maszynowego lub sieci neuronowej do podziału krzywych pomiarowych."
             )
-        with col_param2: optymalizacja = st.selectbox("Wybierz wstępne przygotowanie danych:", ["Standardowa", "Analiza trendu", "FeatureExtraction", "MinMaxScaler", "Filtrowanie szumów"]) if "K-Shape" not in metoda and "DEC" not in metoda and "RDEC" not in metoda and "ADClust" not in metoda and "NMF" not in metoda else "Standardowa"
+        with col_param2: 
+            optymalizacja = st.selectbox(
+                "Wybierz wstępne przygotowanie danych:", 
+                lista_preprocessingow
+            ) if "K-Shape" not in metoda and "DEC" not in metoda and "RDEC" not in metoda and "ADClust" not in metoda and "NMF" not in metoda else "Standardowa"
         with col_param3: liczba_grup = st.slider("Minimalna wielkość grupy (HDBSCAN):" if "HDBSCAN" in metoda else "Maksymalna liczba grup (BGMM):" if "BGMM" in metoda else "Liczba grup (K):", min_value=2, max_value=10, value=5) if "ADClust" not in metoda else 5
 
         st.write("---")
@@ -310,19 +328,13 @@ if df is not None:
             st.caption("Modyfikuj przypisania w locie na ekranie:")
             
             # --- SEKCJA BAZY NA SZTYWNO (GROUND TRUTH SAFE-LOCK) ---
-            # Budujemy słownik na podstawie Twoich wytycznych
             sztywny_podzial_eksperta = {}
             for i in range(1, 44):
-                if i <= 17:
-                    sztywny_podzial_eksperta[f"y{i}"] = "a"
-                elif i <= 21:
-                    sztywny_podzial_eksperta[f"y{i}"] = "b"
-                elif i <= 35:
-                    sztywny_podzial_eksperta[f"y{i}"] = "c"
-                else:
-                    sztywny_podzial_eksperta[f"y{i}"] = "e"
+                if i <= 17: sztywny_podzial_eksperta[f"y{i}"] = "a"
+                elif i <= 21: sztywny_podzial_eksperta[f"y{i}"] = "b"
+                elif i <= 35: sztywny_podzial_eksperta[f"y{i}"] = "c"
+                else: sztywny_podzial_eksperta[f"y{i}"] = "e"
             
-            # Próba odczytu dynamicznego z pliku (jeśli istnieje)
             expert_mapping = {}
             if df_expert_raw is not None and len(df_expert_raw) > 0:
                 try:
@@ -332,45 +344,28 @@ if df is not None:
                     for _, row in df_expert_raw.iterrows():
                         k_str = str(row[col_k]).strip().lower()
                         v_str = str(row[col_g]).strip()
-                        if k_str:
-                            expert_mapping[k_str] = v_str
-                except Exception:
-                    expert_mapping = {}
+                        if k_str: expert_mapping[k_str] = v_str
+                except Exception: expert_mapping = {}
 
-            # Generowanie listy etykiet początkowych dla wczytanych krzywych
             expert_list = []
             for name in nazwy_krzywych:
-                # Czyszczenie i normalizacja nazwy krzywej (np. "y1" lub "1")
                 name_clean = str(name).strip().lower()
-                
-                # Dodatkowe zabezpieczenie: jeśli w pliku są same liczby (np. 1 zamiast y1)
                 if not name_clean.startswith('y') and name_clean.isdigit():
                     name_alt = f"y{name_clean}"
                 else:
                     name_alt = name_clean
                 
-                # Szybka ścieżka wyboru priorytetów:
-                # 1. Sprawdź czy plik Excel coś zwrócił
-                if name_clean in expert_mapping:
-                    expert_list.append(expert_mapping[name_clean])
-                # 2. Sprawdź alternatywną nazwę w pliku Excel
-                elif name_alt in expert_mapping:
-                    expert_list.append(expert_mapping[name_alt])
-                # 3. WYKORZYSTAJ SZTYWNY PANEL RATUNKOWY (Twoja lista z promptu)
-                elif name_clean in sztywny_podzial_eksperta:
-                    expert_list.append(sztywny_podzial_eksperta[name_clean])
-                elif name_alt in sztywny_podzial_eksperta:
-                    expert_list.append(sztywny_podzial_eksperta[name_alt])
-                # 4. Ostateczny fallback w razie nieznanej nazwy
-                else:
-                    expert_list.append("a")
+                if name_clean in expert_mapping: expert_list.append(expert_mapping[name_clean])
+                elif name_alt in expert_mapping: expert_list.append(expert_mapping[name_alt])
+                elif name_clean in sztywny_podzial_eksperta: expert_list.append(sztywny_podzial_eksperta[name_clean])
+                elif name_alt in sztywny_podzial_eksperta: expert_list.append(sztywny_podzial_eksperta[name_alt])
+                else: expert_list.append("a")
                     
             df_current_gt = pd.DataFrame({
                 "Krzywa": [str(n) for n in nazwy_krzywych],
                 "Grupa Eksperta": expert_list
             })
             
-            # Resetowanie stanu edytora po wczytaniu nowej struktury danych
             if "last_file_id" not in st.session_state or st.session_state.last_file_id != file_id:
                 st.session_state.last_file_id = file_id
                 st.session_state["tabela_editor_state"] = df_current_gt
@@ -399,6 +394,10 @@ if df is not None:
             # PRZETWARZANIE DANYCH WEJŚCIOWYCH
             if optymalizacja == "Analiza trendu":
                 dane_do_algorytmu = StandardScaler().fit_transform(krzywe.diff(axis=0).fillna(0).T)
+            elif optymalizacja == "UMAP (Redukcja topologiczna)" and umap_dostepne:
+                baza_skalowana = StandardScaler().fit_transform(krzywe.T)
+                # Redukcja do 2 komponentów nieliniowych za pomocą UMAP
+                dane_do_algorytmu = umap.UMAP(n_neighbors=15, min_dist=0.1, random_state=42).fit_transform(baza_skalowana)
             elif optymalizacja == "FeatureExtraction":
                 cechy = pd.DataFrame(index=nazwy_krzywych)
                 cechy['Max'] = krzywe.max().values
@@ -439,12 +438,12 @@ if df is not None:
             kpi_ari.metric(
                 "Indeks ARI (Zgodność par obiektów)", 
                 f"{ari_score:.1f}%",
-                help="Adjusted Rand Index (ARI): Miara zgodności podziału dokonanego przez algorytm ze spodziewanym podziałem. Wartość jest korygowana o losowe prawdopodobieństwo trafienia. Przyjmuje wartości z przedziału [-1, 1], gdzie 1 oznacza idealną zbieżność par obiektów."
+                help="Adjusted Rand Index (ARI): Miara zgodności podziału dokonanego przez algorytm ze spodziewanym podziałem. Wartość jest korygowana o losowe prawdopodobieństwo trafienia."
             )
             kpi_nmi.metric(
                 "Indeks NMI (Zbieżność informacji sygnału)", 
                 f"{nmi_score:.1f}%",
-                help="Normalized Mutual Information (NMI): Miara oparta na teorii informacji (entropii), określająca jak dużo wiedzy o podziale spodziewanym dostarcza podział wyznaczony przez model. Wynik jest normalizowany do przedziału [0, 1]."
+                help="Normalized Mutual Information (NMI): Miara oparta na teorii informacji (entropii), określająca jak dużo wiedzy o podziale spodziewanym dostarcza podział wyznaczony przez model."
             )
 
             wyniki = pd.DataFrame({'Krzywa': nazwy_krzywych, 'Numer Grupy': numery_grup}).sort_values(by='Numer Grupy')
