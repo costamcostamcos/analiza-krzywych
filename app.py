@@ -80,7 +80,7 @@ OPISY_METOD = {
     "K-means": "Dzieli przestrzeń cech na tzw. obszary Voronoia. Algorytm dąży do minimalizacji wariancji wewnątrzklastrowej.",
     "UMAP + HDBSCAN (Hybryda Gęstościowa)": "Dwustopniowa hybryda nowej generacji. Najpierw rzutuje sygnał do przestrzeni topologicznej nieliniowej 2D (UMAP), a algorytm gęstościowy (HDBSCAN) wycina z nich grupy kształtów.",
     "Spectral + GMM (Hybryda Spektralno-Probabilistyczna)": "Mapuje powiązania grafowe poprzez dekompozycję wartości własnych, a następnie dopasowuje do nich elastyczne chmury probabilistyczne rozkładu normalnego (GMM).",
-    "SOM + K-means (Hybryda sekwencyjna)": "Pierwszy etap wykorzystuje sieć neuronową Kohonena (SOM) do kompresji sygnału na siatkę topologiczną. Drugi etap uruchamia algorytm K-means na wagach neuronów.",
+    "SOM + K-means (Hybryda sekwencyjna)": "Pierwszy etap wykorzystuje sieć neuronową Kohonena (SOM) do kompresji sygnału na siatkę topologiczna. Drugi etap uruchamia algorytm K-means na wagach neuronów.",
     "Klastrowanie Konsensusowe (Ensemble Voting)": "Metoda komitetowa. Uruchamia równolegle K-Means, GMM, Spectral, Ward i buduje macierz współwystępowania. Ostateczny podział jest fuzją decyzji wszystkich modeli.",
     "NMF (Nieujemna Faktoryzacja Macierzy)": "Rozkłada macierz danych na iloczyn dwóch macierzy o elementach wyłącznie nieujemnych.",
     "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich. Próbuje dopasować elastyczne rozkłady normalne, dając miękkie przypisanie probabilistyczne.",
@@ -207,10 +207,8 @@ def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3, df_sy
         return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(dane) + 1
 
 # =================================================================
-# SEKCJA INTERFEJSU UŻYTKOWNIKA (UI) STREAMLIT
+# GŁÓWNA INICJALIZACJA INTERFEJSU
 # =================================================================
-st.title("📊 Interaktywny Analizator Krzywych AI Pro")
-
 st.write("### Ustawienia analizy")
 typ_zrodla = st.radio("Wybierz źródło danych:", ["Plik Excel (.xlsx)", "Link do Google Sheets"], horizontal=True)
 
@@ -280,7 +278,7 @@ if df is not None:
             st.session_state.wybrana_metoda = lista_metod[0]
 
         col_param1, col_param2, col_param3 = st.columns(3)
-        with col_param1: metoda = st.selectbox("Wybierz metoda główna:", lista_metod, key="wybrana_metoda")
+        with col_param1: metoda = st.selectbox("Wybierz metoda główną:", lista_metod, key="wybrana_metoda")
         with col_param2: optymalizacja = st.selectbox("Wybierz wstępne przygotowanie danych:", lista_preprocessingow) if "K-Shape" not in metoda and "UMAP + HDBSCAN" not in metoda and "UMAP + Hierarchiczna" not in metoda else "Standardowa"
         with col_param3: liczba_grup = st.slider("Minimalna wielkość grupy (HDBSCAN):" if "HDBSCAN" in metoda or "UMAP + HDBSCAN" in metoda else "Maksymalna liczba grup (BGMM):" if "BGMM" in metoda else "Liczba grup (K):", min_value=2, max_value=10, value=5)
 
@@ -326,7 +324,14 @@ if df is not None:
                 st.session_state.last_file_id = file_id
                 st.session_state["tabela_editor_state"] = df_current_gt
 
-            edited_gt = st.data_editor(st.session_state["tabela_editor_state"], use_container_width=True, hide_index=True, disabled=["Krzywa"], key=f"editor_instance_{file_id}")
+            # FIX: Zmiana use_container_width na standard width="stretch" wymagany przez nową wersję Streamlit Cloud
+            edited_gt = st.data_editor(
+                st.session_state["tabela_editor_state"], 
+                width="stretch", 
+                hide_index=True, 
+                disabled=["Krzywa"], 
+                key=f"editor_instance_{file_id}"
+            )
             st.session_state["tabela_editor_state"] = edited_gt
             etykiety_eksperta = edited_gt["Grupa Eksperta"].astype(str).tolist()
 
@@ -481,7 +486,8 @@ if df is not None:
                     st.markdown("##### 🚨 „Czarne Owce” (Usunięcie tych krzywych PODNOSI wynik):")
                     df_czarne = df_loo[df_loo["Wpływ na model"] > 0.01].reset_index(drop=True)
                     if not df_czarne.empty:
-                        st.dataframe(df_czarne.style.format({"Wpływ na model": "+{:.2f}%"}), use_container_width=True, hide_index=True)
+                        # FIX: Zmiana use_container_width na standard width="stretch" w tabelach diagnostycznych
+                        st.dataframe(df_czarne.style.format({"Wpływ na model": "+{:.2f}%"}), width="stretch", hide_index=True)
                     else:
                         st.info("Brak wyraźnych anomalii psujących wynik. Wszystkie krzywe wspierają model.")
                         
@@ -489,12 +495,13 @@ if df is not None:
                     st.markdown("##### 🧱 „Filary Modelu” (Usunięcie tych krzywych drastycznie OBNIŻA wynik):")
                     df_filary = df_loo[df_loo["Wpływ na model"] < -0.01].sort_values(by="Wpływ na model", ascending=True).reset_index(drop=True)
                     if not df_filary.empty:
-                        st.dataframe(df_filary.style.format({"Wpływ na model": "{:.2f}%"}), use_container_width=True, hide_index=True)
+                        # FIX: Zmiana use_container_width na standard width="stretch" w tabelach diagnostycznych
+                        st.dataframe(df_filary.style.format({"Wpływ na model": "{:.2f}%"}), width="stretch", hide_index=True)
                     else:
                         st.info("Brak kluczowych filarów – podział grup jest stabilny rozproszony.")
 
         # =================================================================
-        # AUTOMATYCZNY RANKING METOD
+        # AUTOMATYCZNY RANKING METOD (TURNIEJ AI)
         # =================================================================
         st.write("---")
         st.subheader("Ranking Skuteczności Algorytmów")
@@ -519,4 +526,4 @@ if df is not None:
 
     except Exception as ob_blad: st.error(f"Błąd krytyczny podczas renderowania: {ob_blad}")
 else:
-    st.info("Aby rozpocząć, wgraj plik z dysku lub wklej link do Google Sheets powyżej.")
+    st.info("Aby rozpocząć, wgraj plik z dysku lub wklej link do Google Sheets powyżej."
