@@ -28,6 +28,12 @@ try:
 except ImportError:
     pytorch_dostepne = False
 
+# Konfiguracja strony - wymuszenie pełnej szerokości ekranu komputera
+st.set_page_config(
+    page_title="Analizator Krzywych Pro AI", 
+    layout="wide"
+)
+
 # =================================================================
 # SŁOWNIK INTELIGENTNYCH OPISÓW METOD KLASTERYZACJI
 # =================================================================
@@ -232,8 +238,11 @@ def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3):
         return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(dane) + 1
 
 # =================================================================
-# SEKCJA INTERFEJSU UŻYTKOWNIKA (UI) STREAMLIT
+# GŁÓWNY RDZEŃ WYKONAWCZY INTERFEJSU
 # =================================================================
+st.title("📊 Interaktywny Analizator Krzywych AI Pro")
+st.write("Wgraj plik Excel lub wklej link do Google Sheets. System automatycznie dopasuje metody sztucznej inteligencji.")
+
 st.write("### Ustawienia analizy")
 typ_zrodla = st.radio("Wybierz źródło danych:", ["Plik Excel (.xlsx)", "Link do Google Sheets"], horizontal=True)
 
@@ -261,7 +270,7 @@ if df is not None:
         if tslearn_dostepne: lista_metod.append("K-Shape (Kształt fali)")
         if pytorch_dostepne: lista_metod.extend(["DEC (Głębokie Uczenie - Sieć Neuronowa)", "ADEC (Adwersarialne Głębokie Uczenie)", "RDEC (Regularizowane Głębokie Uczenie)", "ADClust (Automatyczne Głębokie Uczenie)"])
 
-        # FIX: Bezpieczna, jawna inicjalizacja stanu przed renderowaniem selectboxa
+        # WYMUSZENIE INICJALIZACJI STANU - Zapobiega błędowi braku atrybutu podczas pierwszego ładowania
         if 'wybrana_metoda' not in st.session_state or st.session_state.wybrana_metoda not in lista_metod:
             st.session_state.wybrana_metoda = lista_metod[0]
 
@@ -299,7 +308,7 @@ if df is not None:
                     st.markdown(f"#### Obróbka Wstępna: `{optymalizacja}`")
                     st.write(OPISY_PREPROCESSING.get(optymalizacja, ""))
 
-            # PRZETWARZANIE DANYCH WEJŚCIOWYCH
+            # SPECYFIKACJA OBRÓBKI SYGNAŁU
             if optymalizacja == "Analiza trendu":
                 dane_do_algorytmu = StandardScaler().fit_transform(krzywe.diff(axis=0).fillna(0).T)
             elif optymalizacja == "FeatureExtraction":
@@ -331,6 +340,7 @@ if df is not None:
             else:
                 dane_do_algorytmu = StandardScaler().fit_transform(krzywe.T)
 
+            # WYWOŁANIE METODY GŁÓWNEJ
             numery_grup = uruchom_silnik_klastrowania(metoda, dane_do_algorytmu, liczba_grup, liczba_grup)
 
             ari_score = adjusted_rand_score(etykiety_eksperta, numery_grup) * 100
@@ -351,6 +361,8 @@ if df is not None:
             )
 
             wyniki = pd.DataFrame({'Krzywa': nazwy_krzywych, 'Numer Grupy': numery_grup}).sort_values(by='Numer Grupy')
+            
+            st.subheader("Wykres")
             fig, ax = plt.subplots(figsize=(10, 4.5))
             cmap = plt.get_cmap('tab10')
             if "Hierarchiczna" in metoda:
@@ -363,7 +375,7 @@ if df is not None:
             plt.close(fig)
 
         # =================================================================
-        # AUTOMATYCZNY RANKING METOD
+        # BEZPRZYCISKOWY RANKING SKUTECZNOŚCI ALGORYTMÓW
         # =================================================================
         st.write("---")
         st.subheader("Ranking Skuteczności Algorytmów")
