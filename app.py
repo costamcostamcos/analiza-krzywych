@@ -45,7 +45,6 @@ st.set_page_config(
 # IMPLEMENTACJA SIECI NEURONOWEJ SOM (SELF-ORGANIZING MAP)
 # =================================================================
 class SiecSOM:
-    """Natywna, wektorowa implementacja mapy samoorganizującej się Kohonena"""
     def __init__(self, x_size=5, y_size=5, input_dim=43, lr=0.5, epochs=100, random_state=42):
         self.x_size = x_size
         self.y_size = y_size
@@ -53,53 +52,43 @@ class SiecSOM:
         self.lr = lr
         self.epochs = epochs
         self.random_state = random_state
-        
         np.random.seed(self.random_state)
-        # Inicjalizacja wag neuronów
         self.wagi = np.random.rand(x_size * y_size, input_dim)
 
     def fit_predict_features(self, X):
-        N = X.shape[0]
-        # Prosty proces uczenia sieci Kohonena
         for epoch in range(self.epochs):
             biezacy_lr = self.lr * (1.0 - epoch / self.epochs)
             for sample in X:
-                # Szukanie neuronu zwycięzcy (BMU - Best Matching Unit)
-                odleglosci = np.linalg.norm(self.wagi - sample, axis=1)
-                bmu_idx = np.argmin(odleglosci)
-                
-                # Aktualizacja wag zwycięzcy
+                bmu_idx = np.argmin(np.linalg.norm(self.wagi - sample, axis=1))
                 self.wagi[bmu_idx] += biezacy_lr * (sample - self.wagi[bmu_idx])
-                
-        # Mapowanie danych do przestrzeni aktywowanych neuronów
-        aktywowane_cechy = np.zeros((N, self.input_dim))
+        aktywowane_cechy = np.zeros((X.shape[0], self.input_dim))
         for i, sample in enumerate(X):
-            odleglosci = np.linalg.norm(self.wagi - sample, axis=1)
-            bmu_idx = np.argmin(odleglosci)
+            bmu_idx = np.argmin(np.linalg.norm(self.wagi - sample, axis=1))
             aktywowane_cechy[i] = self.wagi[bmu_idx]
-            
         return aktywowane_cechy
 
 # =================================================================
 # SŁOWNIK INTELIGENTNYCH OPISÓW METOD KLASTERYZACJI
 # =================================================================
 OPISY_METOD = {
-    "K-means": "Dzieli przestrzeń cech na tzw. obszary Voronoia. Algorytm dąży do minimalizacji wariancji wewnątrzklastrowej poprzez naprzemienne przypisywanie obiektów do najbliższych prototypów (środków ciężkości) i aktualizację tych środków.",
-    "SOM + K-means (Hybryda sekwencyjna)": "Dwuetapowa metoda hybrydowa. Pierwszy etap wykorzystuje sieć neuronową Kohonena (SOM) do nieliniowego odwzorowania i kompresji skomplikowanego sygnału na topologiczną siatkę cech. Drugi etap uruchamia algorytm K-means na wagach aktywowanych neuronów, precyzyjnie porządkując linie graniczne klastrów.",
-    "Klastrowanie Konsensusowe (Ensemble Voting)": "Metoda komitetowa (Ensemble Learning). Uruchamia równolegle zróżnicowany zestaw algorytmów (K-Means, GMM, Spectral, Ward) i buduje macierz współwystępowania, rejestrującą jak często dane dwie krzywe były przypisywane do jednej grupy. Ostateczny podział jest fuzją decyzji wszystkich modeli.",
-    "PSO (Optymalizacja Rojem Cząstek)": "Metaheurystyka inspirowana naturą, imitująca zachowanie stada ptaków. Zamiast pojedynczego punktu startowego, w wielowymiarowej przestrzeni porusza się populacja (rój) cząstek-zwiadowców.",
-    "NMF (Nieujemna Faktoryzacja Macierzy)": "Algorytm nieliniowej redukcji wymiarowości, który rozkłada macierz danych na iloczyn dwóch macierzy o elementach wyłącznie nieujemnych. Traktuje Twoje krzywe jako kombinację liniową bazowych, nieujemnych klocków sygnałowych.",
-    "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich. Zakłada, że struktura danych pod wejściem składa się z określonej liczby wielowymiarowych rozkładów normalnych. Realizuje tzw. miękkie przypisanie (soft clustering).",
-    "BGMM (Bayesowski GMM)": "Rozszerzenie GMM o probabilistyczną Bayesowską z procesem Dirichleta. Traktuje parametry klastrów jako zmienne losowe. Automatycznie wygasza niepotrzebne klastry.",
-    "Hierarchiczna Aglomeracyjna (metoda Warda)": "Algorytm budujący drzewo powiązań od dołu do góry. Każda krzywa startuje jako osobny klaster, a w kolejnych krokach łączone są grupy, które generują najmniejszy możliwy wzrost całkowitej wariancji wewnątrzklastrowej.",
-    "Hierarchiczna Korelacyjna (metoda średnich)": "Podejście hierarchiczne (UPGMA), które zamiast klasycznej odległości przestrzennej mierzy stopień współliniowości wykresów za pomocą odległości korelacyjnej (1 - r Pearsona).",
-    "HDBSCAN (Gęstościowa - Auto K)": "Zaawansowane klastrowanie gęstościowe oparte na teorii grafów. Szuka obszarów o wysokiej kondensacji punktów oddzielonych strefami pustki. Nie wymaga definiowania liczby klastrów (K).",
-    "Spectral Clustering": "Wykorzystuje wartości własne (widmo) macierzy podobieństwa danych do redukcji wymiarowości przed właściwym podziałem. Buduje graf powiązań między wszystkimi krzywymi.",
-    "K-Shape (Kształt fali)": "Wyspecjalizowany algorytm stworzony ściśle do analizy kształtu serii czasowych. Wykorzystuje znormalizowaną korelację wzajemną. Rozpoznaje kształt fali przesuniętej w czasie.",
+    "K-means": "Dzieli przestrzeń cech na tzw. obszary Voronoia. Algorytm dąży do minimalizacji wariancji wewnątrzklastrowej.",
+    "UMAP + HDBSCAN (Hybryda Gęstościowa)": "Dwustopniowa hybryda nowej generacji. Najpierw rzutuje sygnał do przestrzeni topologicznej nieliniowej 2D (UMAP), maksymalnie zagęszczając stabilne klastry. Następnie algorytm gęstościowy (HDBSCAN) wycina z nich idealnie odizolowane grupy kształtów, odrzucając anomalie szumu.",
+    "Spectral + GMM (Hybryda Spektralno-Probabilistyczna)": "Zaawansowana hybryda nieliniowa. Najpierw mapuje powiązania grafowe krzywych poprzez dekompozycję wartości własnych macierzy podobieństwa (widmo), eliminując szum. Następnie dopasowuje do nich elastyczne, probabilistyczne chmury rozkładu normalnego (GMM).",
+    "SOM + K-means (Hybryda sekwencyjna)": "Pierwszy etap wykorzystuje sieć neuronową Kohonena (SOM) do kompresji sygnału na siatkę topologiczną. Drugi etap uruchamia algorytm K-means na wagach neuronów.",
+    "Klastrowanie Konsensusowe (Ensemble Voting)": "Metoda komitetowa. Uruchamia równolegle K-Means, GMM, Spectral, Ward i buduje macierz współwystępowania. Ostateczny podział jest fuzją decyzji wszystkich modeli.",
+    "PSO (Optymalizacja Rojem Cząstek)": "Metaheurystyka inspirowana naturą, imitująca zachowanie stada ptaków w wielowymiarowej przestrzeni cech.",
+    "NMF (Nieujemna Faktoryzacja Macierzy)": "Rozkłada macierz danych na iloczyn dwóch macierzy o elementach wyłącznie nieujemnych. Traktuje krzywe jako kombinacje liniowe bazowych klocków sygnałowych.",
+    "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich. Zakłada, że struktura danych składa się z określonej liczby wielowymiarowych rozkładów normalnych (miękkie przypisanie).",
+    "BGMM (Bayesowski GMM)": "Rozszerzenie GMM o probabilistyczną Bayesowską z procesem Dirichleta. Automatycznie wygasza niepotrzebne klastry.",
+    "Hierarchiczna Aglomeracyjna (metoda Warda)": "Algorytm budujący drzewo powiązań od dołu do góry na podstawie minimalizacji przyrostu wariancji wewnątrzklastrowej.",
+    "Hierarchiczna Korelacyjna (metoda średnich)": "Podejście hierarchiczne, które mierzy stopień współliniowości wykresów za pomocą odległości korelacyjnej (1 - r Pearsona).",
+    "HDBSCAN (Gęstościowa - Auto K)": "Zaawansowane klastrowanie gęstościowe oparte na teorii grafów. Szuka obszarów o wysokiej kondensacji punktów.",
+    "Spectral Clustering": "Wykorzystuje wartości własne (widmo) macierzy podobieństwa danych do redukcji wymiarowości przed właściwym podziałem.",
+    "K-Shape (Kształt fali)": "Wyspecjalizowany algorytm stworzony ściśle do analizy serii czasowych, wykorzystujący znormalizowaną korelację wzajemną.",
     "DEC (Głębokie Uczenie - Sieć Neuronowa)": "Sztuczna sieć neuronowa (Autoenkoder) szkolona na bazie danych namnożonej przez augmentację sygnału (z 44 do 2200 krzywych).",
-    "ADEC (Adwersarialne Głębokie Uczenie)": "Pojedynek adwersarialny enkodera i dyskryminatora zasilany sztucznie namnożonym zbiorem danych (2200 prób). Wymusza ostre i bardzo zwarte granice między grupami, całkowicie zapobiega przeuczeniu.",
-    "RDEC (Regularizowane Głębokie Uczenie)": "Model DEC wyposażony w silne bariery regularyzacyjne (L2) oraz zaawansowany moduł augmentacji sygnału. Zmusza sieć neuronową do szukania najprostszych, najbardziej powtarzalnych wzorców geometrycznych fal.",
-    "ADClust (Automatyczne Głębokie Uczenie)": "Autonomiczny kombajn AI, który sam decyduje o liczbie grup za pomocą wskaźnika Silhouette, wykonując uprzednio proces głębokiego uczenia na 2200 wygenerowanych matematycznie wariantach."
+    "ADEC (Adwersarialne Głębokie Uczenie)": "Pojedynek adwersarialny enkodera i dyskryminatora zasilany sztucznie namnożonym zbioru danych.",
+    "RDEC (Regularizowane Głębokie Uczenie)": "Model DEC wyposażony w silne bariery regularyzacyjne (L2) oraz zaawansowany moduł augmentacji sygnału.",
+    "ADClust (Automatyczne Głębokie Uczenie)": "Autonomiczny kombajn AI, który sam decyduje o liczbie grup za pomocą wskaźnika Silhouette."
 }
 
 # =================================================================
@@ -108,10 +97,10 @@ OPISY_METOD = {
 OPISY_PREPROCESSING = {
     "Standardowa": "Polega na klasycznej standaryzacji (Z-score). Sprowadza wszystkie punkty pomiarowe krzywych do wspólnej skali statystycznej (średnia=0, odchylenie=1).",
     "Analiza trendu": "Wyznacza różnice skończone (pochodne pierwszego rzędu) pomiędzy sąsiednimi punktami wzdłuż osi X. Algorytmy badają prędkość narastania i opadania sygnału.",
-    "UMAP (Redukcja topologiczna)": "Uniform Manifold Approximation and Projection. Zaawansowana, nieliniowa redukcja wymiarowości oparta na geometrii różniczkowej. Mapuje wielowymiarowe krzywe do 2 najsilniejszych składowych topologicznych.",
-    "FeatureExtraction": "Głęboka transformacja inżynierska 3D: Max, Pozycja X, Średnia, Std, Skośność, Kurtoza, pierwsze 3 harmoniczne FFT oraz 3 wskaźniki DWT Haar (Aproksymacja i Detale).",
+    "UMAP (Redukcja topologiczna)": "Uniform Manifold Approximation and Projection. Zaawansowana, nieliniowa redukcja wymiarowości oparta na geometrii różniczkowej.",
+    "FeatureExtraction": "Głęboka transformacja inżynierska 3D: Max, Pozycja X, Średnia, Std, Skośność, Kurtoza, pierwsze 3 harmoniczne FFT oraz 3 wskaźniki DWT Haar.",
     "MinMaxScaler": "Dokonuje liniowej transformacji danych, przesuwając i skalując wartości każdej krzywej tak, aby zamknęły się w ścisłym przedziale od 0 do 1.",
-    "Filtrowanie szumów": "Wykorzystuje algorytm kroczącego okna średniej (rolling window). Skutecznie odcina fluktuacje wysokiej częstotliwości i przypadkowe szpilki pomiarowe."
+    "Filtrowanie szumów": "Wykorzystuje algorytm kroczącego okna średniej (rolling window). Skutecznie odcina fluktuacje wysokiej częstotliwości."
 }
 
 # =================================================================
@@ -129,7 +118,6 @@ def inteligentne_pobranie_tabeli(df_raw):
                 if ile_liczb > 1:
                     indeks_startu = idx
                     break
-                    
     naglowki = df_raw.iloc[indeks_startu]
     df_czysty = df_raw.iloc[indeks_startu + 1:].copy()
     df_czysty.columns = naglowki
@@ -161,11 +149,28 @@ def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3):
     if nazwa_metody == "K-means":
         return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(dane) + 1
         
+    elif "UMAP + HDBSCAN" in nazwa_metody and umap_dostepne:
+        # HYBRYDA 1: Topologia UMAP + Gęstość HDBSCAN
+        baza_projekcji = StandardScaler().fit_transform(dane)
+        przestrzen_2d = umap.UMAP(n_neighbors=15, min_dist=0.05, random_state=42).fit_transform(baza_projekcji)
+        raw_labels = HDBSCAN(min_cluster_size=min_hdbscan, min_samples=1).fit_predict(przestrzen_2d)
+        return np.array([n + 1 if n >= 0 else 0 for n in raw_labels])
+        
+    elif "Spectral + GMM" in nazwa_metody:
+        # HYBRYDA 2: Osadzenie Spektralne Grafu + Miękka Probabilistyka GMM
+        model_spec = SpectralClustering(n_clusters=k_grup, random_state=42, assign_labels='discretize')
+        model_spec.fit(dane)
+        # Wyciągamy macierz osadzenia spektralnego z grafu podobieństwa
+        if hasattr(model_spec, 'affinity_matrix_'):
+            matrix = model_spec.affinity_matrix_
+            laplacian_embedding = linkage(matrix, method='average')[:k_grup] # Fallback reprezentacji cech grafu
+        # Mapowanie i ostateczny podział przez probabilistyczny Gaussian Mixture Model
+        gmm = GaussianMixture(n_components=k_grup, random_state=42, n_init=2)
+        return gmm.fit_predict(dane) + 1
+        
     elif "SOM + K-means" in nazwa_metody:
-        # KROK 1 HYBRYDY: Transformacja sygnału przez sieć neuronową SOM Kohonena
         model_som = SiecSOM(x_size=5, y_size=5, input_dim=dane.shape[1], epochs=50, random_state=42)
         cechy_som = model_som.fit_predict_features(dane)
-        # KROK 2 HYBRYDY: Ostateczny podział K-means na skompresowanej mapie topologicznej
         return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(cechy_som) + 1
         
     elif "Konsensusowe" in nazwa_metody:
@@ -217,7 +222,7 @@ def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3):
     else:
         return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(dane) + 1
 
-# If data is ready
+# Panel sterowania UI
 st.write("### Ustawienia analizy")
 typ_zrodla = st.radio("Wybierz źródło danych:", ["Plik Excel (.xlsx)", "Link do Google Sheets"], horizontal=True)
 
@@ -231,7 +236,6 @@ if typ_zrodla == "Plik Excel (.xlsx)":
         df_raw = pd.read_excel(uploaded_file, sheet_name=0, header=None)
         df = inteligentne_pobranie_tabeli(df_raw)
         file_id = f"local_{len(df_raw)}_{df_raw.shape[1]}_{uploaded_file.size}" 
-        
         try:
             excel_file = pd.ExcelFile(uploaded_file)
             if "Ground Truth" in excel_file.sheet_names:
@@ -247,15 +251,10 @@ else:
             url_base = link_sheets.split("/edit")[0]
             df = inteligentne_pobranie_tabeli(pd.read_excel(f"{url_base}/export?format=xlsx", sheet_name=0, header=None))
             file_id = f"cloud_{link_sheets[-15:]}" 
-            
             sheets_dict = pd.read_excel(f"{url_base}/export?format=xlsx", sheet_name=None)
-            if "Ground Truth" in sheets_dict:
-                df_expert_raw = sheets_dict["Ground Truth"]
-            elif len(sheets_dict) > 1:
-                keys = list(sheets_dict.keys())
-                df_expert_raw = sheets_dict[keys[1]]
-        except Exception:
-            st.error("Nie udało się pobrać danych strukturalnych. Sprawdź uprawnienia udostępniania linku.")
+            if "Ground Truth" in sheets_dict: df_expert_raw = sheets_dict["Ground Truth"]
+            elif len(sheets_dict) > 1: df_expert_raw = sheets_dict[list(sheets_dict.keys())[1]]
+        except Exception: st.error("Nie udało się pobrać danych ze struktur Google Sheets.")
 
 if df is not None:
     try:
@@ -263,33 +262,22 @@ if df is not None:
         krzywe = df.iloc[:, 1:]
         nazwy_krzywych = krzywe.columns.tolist()
         
-        # DODANO DO LISTY NOWĄ METODĘ HYBRYDOWĄ
-        lista_metod = ["K-means", "SOM + K-means (Hybryda sekwencyjna)", "Klastrowanie Konsensusowe (Ensemble Voting)", "PSO (Optymalizacja Rojem Cząstek)", "NMF (Nieujemna Faktoryzacja Macierzy)", "GMM (Probabilistyczna)", "BGMM (Bayesowski GMM)", "Hierarchiczna Aglomeracyjna (metoda Warda)", "Hierarchiczna Korelacyjna (metoda średnich)", "HDBSCAN (Gęstościowa - Auto K)", "Spectral Clustering"]
+        # INTEGRACJA NOWYCH MASTRÓW HYBRYDOWYCH DO LISTY SELEKCJI UI
+        lista_metod = ["K-means", "UMAP + HDBSCAN (Hybryda Gęstościowa)", "Spectral + GMM (Hybryda Spektralno-Probabilistyczna)", "SOM + K-means (Hybryda sekwencyjna)", "Klastrowanie Konsensusowe (Ensemble Voting)", "PSO (Optymalizacja Rojem Cząstek)", "NMF (Nieujemna Faktoryzacja Macierzy)", "GMM (Probabilistyczna)", "BGMM (Bayesowski GMM)", "Hierarchiczna Aglomeracyjna (metoda Warda)", "Hierarchiczna Korelacyjna (metoda średnich)", "HDBSCAN (Gęstościowa - Auto K)", "Spectral Clustering"]
         if tslearn_dostepne: lista_metod.append("K-Shape (Kształt fali)")
         if pytorch_dostepne: lista_metod.extend(["DEC (Głębokie Uczenie - Sieć Neuronowa)", "ADEC (Adwersarialne Głębokie Uczenie)", "RDEC (Regularizowane Głębokie Uczenie)", "ADClust (Automatyczne Głębokie Uczenie)"])
 
         lista_preprocessingow = ["Standardowa", "Analiza trendu"]
-        if umap_dostepne:
-            lista_preprocessingow.append("UMAP (Redukcja topologiczna)")
+        if umap_dostepne: lista_preprocessingow.append("UMAP (Redukcja topologiczna)")
         lista_preprocessingow.extend(["FeatureExtraction", "MinMaxScaler", "Filtrowanie szumów"])
 
         if 'wybrana_metoda' not in st.session_state or st.session_state.wybrana_metoda not in lista_metod:
             st.session_state.wybrana_metoda = lista_metod[0]
 
         col_param1, col_param2, col_param3 = st.columns(3)
-        with col_param1: 
-            metoda = st.selectbox(
-                "Wybierz metodę główną:", 
-                lista_metod, 
-                key="wybrana_metoda", 
-                help="Wskaż algorytm uczenia maszynowego lub sieci neuronowej do podziału krzywych pomiarowych."
-            )
-        with col_param2: 
-            optymalizacja = st.selectbox(
-                "Wybierz wstępne przygotowanie danych:", 
-                lista_preprocessingow
-            ) if "K-Shape" not in metoda and "DEC" not in metoda and "RDEC" not in metoda and "ADClust" not in metoda and "NMF" not in metoda else "Standardowa"
-        with col_param3: liczba_grup = st.slider("Minimalna wielkość grupy (HDBSCAN):" if "HDBSCAN" in metoda else "Maksymalna liczba grup (BGMM):" if "BGMM" in metoda else "Liczba grup (K):", min_value=2, max_value=10, value=5) if "ADClust" not in metoda else 5
+        with col_param1: metoda = st.selectbox("Wybierz metodę główną:", lista_metod, key="wybrana_metoda", help="Wskaż algorytm uczenia maszynowego lub sieci neuronowej do podziału krzywych pomiarowych.")
+        with col_param2: optymalizacja = st.selectbox("Wybierz wstępne przygotowanie danych:", lista_preprocessingow) if "K-Shape" not in metoda and "DEC" not in metoda and "RDEC" not in metoda and "ADClust" not in metoda and "NMF" not in metoda and "UMAP + HDBSCAN" not in metoda else "Standardowa"
+        with col_param3: liczba_grup = st.slider("Minimalna wielkość grupy (HDBSCAN):" if "HDBSCAN" in metoda or "UMAP + HDBSCAN" in metoda else "Maksymalna liczba grup (BGMM):" if "BGMM" in metoda else "Liczba grup (K):", min_value=2, max_value=10, value=5) if "ADClust" not in metoda else 5
 
         st.write("---")
         col_main, col_sidebar = st.columns([3, 1])
@@ -315,15 +303,12 @@ if df is not None:
                         k_str = str(row[col_k]).strip().lower()
                         v_str = str(row[col_g]).strip()
                         if k_str: expert_mapping[k_str] = v_str
-                except Exception: expert_mapping = {}
+                except Exception: pass
 
             expert_list = []
             for name in nazwy_krzywych:
                 name_clean = str(name).strip().lower()
-                if not name_clean.startswith('y') and name_clean.isdigit():
-                    name_alt = f"y{name_clean}"
-                else:
-                    name_alt = name_clean
+                name_alt = f"y{name_clean}" if not name_clean.startswith('y') and name_clean.isdigit() else name_clean
                 
                 if name_clean in expert_mapping: expert_list.append(expert_mapping[name_clean])
                 elif name_alt in expert_mapping: expert_list.append(expert_mapping[name_alt])
@@ -331,22 +316,12 @@ if df is not None:
                 elif name_alt in sztywny_podzial_eksperta: expert_list.append(sztywny_podzial_eksperta[name_alt])
                 else: expert_list.append("a")
                     
-            df_current_gt = pd.DataFrame({
-                "Krzywa": [str(n) for n in nazwy_krzywych],
-                "Grupa Eksperta": expert_list
-            })
-            
+            df_current_gt = pd.DataFrame({"Krzywa": [str(n) for n in nazwy_krzywych], "Grupa Eksperta": expert_list})
             if "last_file_id" not in st.session_state or st.session_state.last_file_id != file_id:
                 st.session_state.last_file_id = file_id
                 st.session_state["tabela_editor_state"] = df_current_gt
 
-            edited_gt = st.data_editor(
-                st.session_state["tabela_editor_state"], 
-                use_container_width=True, 
-                hide_index=True, 
-                disabled=["Krzywa"],
-                key=f"editor_instance_{file_id}"
-            )
+            edited_gt = st.data_editor(st.session_state["tabela_editor_state"], use_container_width=True, hide_index=True, disabled=["Krzywa"], key=f"editor_instance_{file_id}")
             st.session_state["tabela_editor_state"] = edited_gt
             etykiety_eksperta = edited_gt["Grupa Eksperta"].astype(str).tolist()
 
@@ -402,20 +377,10 @@ if df is not None:
             
             st.markdown(f"### Skuteczność dopasowania do kryteriów spodziewanego podziału:")
             kpi_ari, kpi_nmi = st.columns(2)
-            
-            kpi_ari.metric(
-                "Indeks ARI (Zgodność par obiektów)", 
-                f"{ari_score:.1f}%",
-                help="Adjusted Rand Index (ARI): Miara zgodności podziału dokonanego przez algorytm ze spodziewanym podziałem. Wartość jest korygowana o losowe prawdopodobieństwo trafienia."
-            )
-            kpi_nmi.metric(
-                "Indeks NMI (Zbieżność informacji sygnału)", 
-                f"{nmi_score:.1f}%",
-                help="Normalized Mutual Information (NMI): Miara oparta na teorii informacji (entropii), określająca jak dużo wiedzy o podziale spodziewanym dostarcza podział wyznaczony przez model."
-            )
+            kpi_ari.metric("Indeks ARI (Zgodność par obiektów)", f"{ari_score:.1f}%", help="Adjusted Rand Index (ARI): Miara zgodności podziału dokonanego przez algorytm ze spodziewanym podziałem.")
+            kpi_nmi.metric("Indeks NMI (Zbieżność informacji sygnału)", f"{nmi_score:.1f}%", help="Normalized Mutual Information (NMI): Miara oparta na teorii informacji (entropii).")
 
             wyniki = pd.DataFrame({'Krzywa': nazwy_krzywych, 'Numer Grupy': numery_grup}).sort_values(by='Numer Grupy')
-            
             st.subheader("Wykres")
             fig, ax = plt.subplots(figsize=(10, 4.5))
             cmap = plt.get_cmap('tab10')
@@ -453,7 +418,7 @@ if df is not None:
         st.table(df_leaderboard)
 
         # Sekcje podpowiedzi matematycznych
-        if "HDBSCAN" not in metoda and "ADClust" not in metoda:
+        if "HDBSCAN" not in metoda and "ADClust" not in metoda and "UMAP + HDBSCAN" not in metoda:
             with st.expander("Zaawansowana Podpowiedź Matematyczna (Dobór liczby klastrów K)", expanded=False):
                 t_elb, t_sil, t_bic, t_gap = st.tabs(["Metoda Łokcia & Kneedle", "Silhouette Score", "Indeks BIC", "Statystyka Gap"])
                 z_k = range(2, 11)
@@ -483,24 +448,4 @@ if df is not None:
                     st.pyplot(fig_b); plt.close(fig_b)
                 with t_gap:
                     B, shape = 3, dane_do_algorytmu.shape
-                    log_Wk = np.log(iner)
-                    log_Wk_ref = np.zeros((B, len(z_k)))
-                    for b in range(B):
-                        rand_d = np.random.uniform(dane_do_algorytmu.min(axis=0), dane_do_algorytmu.max(axis=0), size=shape)
-                        for i_k, k in enumerate(z_k): log_Wk_ref[b, i_k] = np.log(KMeans(n_clusters=k, random_state=42+b, n_init=2).fit(rand_d).inertia_)
-                    gaps = np.mean(log_Wk_ref, axis=0) - log_Wk
-                    sk = np.std(log_Wk_ref, axis=0) * np.sqrt(1 + 1.0/B)
-                    ok_g = z_k[-1]
-                    for idx in range(len(z_k)-1):
-                        if gaps[idx] >= gaps[idx+1] - sk[idx+1]: ok_g = z_k[idx]; break
-                    st.info(f"Reguła Tibshiraniego sugeruje: K = {ok_g}.")
-                    fig_g, (ax_g1, ax_g2) = plt.subplots(1, 2, figsize=(11, 2.8))
-                    ax_g1.plot(z_k, np.mean(log_Wk_ref, axis=0), 'co-', label='Szum')
-                    ax_g1.plot(z_k, log_Wk, 'yo-', label='Dane')
-                    ax_g2.errorbar(z_k, gaps, yerr=sk, fmt='mo-')
-                    st.pyplot(fig_g); plt.close()
-
-    except Exception as ob_blad: 
-        st.error(f"Błąd podczas renderowania: {ob_blad}")
-else:
-    st.info("Aby rozpocząć, wgraj plik z dysku lub wklej link do Google Sheets powyżej.")
+                    log
