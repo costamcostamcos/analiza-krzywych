@@ -43,7 +43,7 @@ OPISY_METOD = {
     "PSO (Optymalizacja Rojem Cząstek)": "Metaheurystyka inspirowana naturą, imitująca zachowanie stada ptaków. Zamiast pojedynczego punktu startowego, w wielowymiarowej przestrzeni porusza się populacja (rój) cząstek-zwiadowców.",
     "NMF (Nieujemna Faktoryzacja Macierzy)": "Algorytm nieliniowej redukcji wymiarowości, który rozkłada macierz danych na iloczyn dwóch macierzy o elementach wyłącznie nieujemnych. Traktuje Twoje krzywe jako kombinację liniową bazowych, nieujemnych klocków sygnałowych.",
     "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich. Zakłada, że struktura danych pod wejściem składa się z określonej liczby wielowymiarowych rozkładów normalnych. Realizuje tzw. miękkie przypisanie (soft clustering).",
-    "BGMM (Bayesowski GMM)": "Rozszerzenie GMM o probabilistyczną Bayesowską z procesem Dirichleta. Traktuje parametry klastrów jako zmienne losowe. Automatycznie wygasza niepotrzebne klastry.",
+    "BGMM (Bayesowski GMM)": "Rozszerzenie GMM o probabilistyczną Bayesowšanu z procesem Dirichleta. Traktuje parametry klastrów jako zmienne losowe. Automatycznie wygasza niepotrzebne klastry.",
     "Hierarchiczna Aglomeracyjna (metoda Warda)": "Algorytm budujący drzewo powiązań od dołu do góry. Każda krzywa startuje jako osobny klaster, a w kolejnych krokach łączone są grupy, które generują najmniejszy możliwy wzrost całkowitej wariancji wewnątrzklastrowej.",
     "Hierarchiczna Korelacyjna (metoda średnich)": "Podejście hierarchiczne (UPGMA), które zamiast klasycznej odległości przestrzennej mierzy stopień współliniowości wykresów za pomocą odległości korelacyjnej (1 - r Pearsona).",
     "HDBSCAN (Gęstościowa - Auto K)": "Zaawansowane klastrowanie gęstościowe oparte na teorii grafów. Szuka obszarów o wysokiej kondensacji punktów oddzielonych strefami pustki. Nie wymaga definiowania liczby klastrów (K).",
@@ -251,7 +251,7 @@ if typ_zrodla == "Plik Excel (.xlsx)":
     if uploaded_file is not None:
         df_raw = pd.read_excel(uploaded_file, sheet_name=0, header=None)
         df = inteligentne_pobranie_tabeli(df_raw)
-        file_id = f"local_{len(df_raw)}_{df_raw.shape[1]}" 
+        file_id = f"local_{len(df_raw)}_{df_raw.shape[1]}_{uploaded_file.size}" 
         
         try:
             excel_file = pd.ExcelFile(uploaded_file)
@@ -309,43 +309,48 @@ if df is not None:
             st.markdown("### Spodziewany Podział Grup")
             st.caption("Modyfikuj przypisania w locie na ekranie:")
             
-            # --- ZMIANA REWOLUCYJNA: NOWA DETEKCJA PASZPORTU I KONTROLI CACHE ---
-            klucz_pliku = f"last_loaded_{file_id}"
-            if klucz_pliku not in st.session_state:
-                st.session_state[klucz_pliku] = True
+            # --- SUPREME FIX: BEZWARUNKOWE GENEROWANIE I NADPISYWANIE REJESTRU BAZY ---
+            if df_expert_raw is not None and len(df_expert_raw) > 0:
+                # Normalizujemy pionowo nagłówki kolumn Ground Truth
+                df_expert_raw.columns = [str(c).strip().lower() for c in df_expert_raw.columns]
+                col_k = df_expert_raw.columns[0]
+                col_g = df_expert_raw.columns[1]
                 
-                if df_expert_raw is not None and len(df_expert_raw) > 0:
-                    df_expert_raw.columns = [str(c).strip() for c in df_expert_raw.columns]
-                    col_k = df_expert_raw.columns[0]
-                    col_g = df_expert_raw.columns[1]
+                # Budujemy słownik mapujący, gdzie KLUCZ oraz WARTOŚĆ to zawsze wyczyszczone stringi
+                expert_mapping = {}
+                for _, row in df_expert_raw.iterrows():
+                    key_clean = str(row[col_k]).strip().lower()
+                    val_clean = str(row[col_g]).strip()
+                    if key_clean:
+                        expert_mapping[key_clean] = val_clean
+                
+                # Mapowanie końcowe krzywych
+                expert_list = []
+                for name in nazwy_krzywych:
+                    norm_name = str(name).strip().lower()
+                    expert_list.append(expert_mapping.get(norm_name, "a"))
                     
-                    expert_mapping = {}
-                    for _, row in df_expert_raw.iterrows():
-                        key_str = str(row[col_k]).strip().lower()
-                        val_str = str(row[col_g]).strip()
-                        expert_mapping[key_str] = val_str
-                    
-                    expert_list = []
-                    for name in nazwy_krzywych:
-                        norm_name = str(name).strip().lower()
-                        expert_list.append(expert_mapping.get(norm_name, "a"))
-                        
-                    st.session_state["tabela_editor_state"] = pd.DataFrame({
-                        "Krzywa": [str(n) for n in nazwy_krzywych],
-                        "Grupa Eksperta": expert_list
-                    })
-                else:
-                    st.session_state["tabela_editor_state"] = pd.DataFrame({
-                        "Krzywa": [str(n) for n in nazwy_krzywych], 
-                        "Grupa Eksperta": ["a"] * len(nazwy_krzywych)
-                    })
+                df_current_gt = pd.DataFrame({
+                    "Krzywa": [str(n) for n in nazwy_krzywych],
+                    "Grupa Eksperta": expert_list
+                })
+            else:
+                df_current_gt = pd.DataFrame({
+                    "Krzywa": [str(n) for n in nazwy_krzywych], 
+                    "Grupa Eksperta": ["a"] * len(nazwy_krzywych)
+                })
             
+            # Zapobiegamy blokowaniu stanu sesji przez widget Streamlita
+            if "last_file_id" not in st.session_state or st.session_state.last_file_id != file_id:
+                st.session_state.last_file_id = file_id
+                st.session_state["tabela_editor_state"] = df_current_gt
+
             edited_gt = st.data_editor(
                 st.session_state["tabela_editor_state"], 
                 use_container_width=True, 
                 hide_index=True, 
                 disabled=["Krzywa"],
-                key="widget_editor_krzywych"
+                key=f"editor_instance_{file_id}" # Dynamiczny klucz resetujący instancję widgetu
             )
             st.session_state["tabela_editor_state"] = edited_gt
             etykiety_eksperta = edited_gt["Grupa Eksperta"].astype(str).tolist()
