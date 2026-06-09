@@ -80,10 +80,10 @@ OPISY_METOD = {
     "K-means": "Dzieli przestrzeń cech na tzw. obszary Voronoia. Algorytm dąży do minimalizacji wariancji wewnątrzklastrowej.",
     "UMAP + HDBSCAN (Hybryda Gęstościowa)": "Dwustopniowa hybryda nowej generacji. Najpierw rzutuje sygnał do przestrzeni topologicznej nieliniowej 2D (UMAP), a algorytm gęstościowy (HDBSCAN) wycina z nich grupy kształtów.",
     "Spectral + GMM (Hybryda Spektralno-Probabilistyczna)": "Mapuje powiązania grafowe poprzez dekompozycję wartości własnych, a następnie dopasowuje do nich elastyczne chmury probabilistyczne rozkładu normalnego (GMM).",
-    "SOM + K-means (Hybryda sekwencyjna)": "Pierwszy etap wykorzystuje sieć neuronową Kohonena (SOM) do kompresji sygnału na siatkę topologicznej. Drugi etap uruchamia algorytm K-means na wagach neuronów.",
+    "SOM + K-means (Hybryda sekwencyjna)": "Pierwszy etap wykorzystuje sieć neuronową Kohonena (SOM) do kompresji sygnału na siatkę topologiczną. Drugi etap uruchamia algorytm K-means na wagach neuronów.",
     "Klastrowanie Konsensusowe (Ensemble Voting)": "Metoda komitetowa. Uruchamia równolegle K-Means, GMM, Spectral, Ward i buduje macierz współwystępowania. Ostateczny podział jest fuzją decyzji wszystkich modeli.",
     "NMF (Nieujemna Faktoryzacja Macierzy)": "Rozkłada macierz danych na iloczyn dwóch macierzy o elementach wyłącznie nieujemnych.",
-    "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich (ok. 60% ARI). Próbuje dopasować elastyczne rozkłady normalne, dając miękkie przypisanie probabilistyczne.",
+    "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich. Próbuje dopasować elastyczne rozkłady normalne, dając miękkie przypisanie probabilistyczne.",
     "BGMM (Bayesowski GMM)": "Rozszerzenie GMM o probabilistyczną Bayesowską z procesem Dirichleta. Automatycznie wygasza niepotrzebne klastry.",
     "Hierarchiczna Korelacyjna (metoda średnich)": "Podejście hierarchiczne, które mierzy stopień współliniowości wykresów za pomocą odległości korelacyjnej (1 - r Pearsona).",
     "HDBSCAN (Gęstościowa - Auto K)": "Zaawansowane klastrowanie gęstościowe oparte na teorii grafów. Szuka obszarów o wysokiej kondensacji punktów.",
@@ -385,26 +385,70 @@ if df is not None:
             st.subheader("Wykres")
             fig, ax = plt.subplots(figsize=(10, 4.5))
             cmap = plt.get_cmap('tab10')
+            
             if "Hierarchiczna" in metoda and "+" not in metoda:
                 dendrogram(linkage(dane_do_algorytmu, method='ward' if "Warda" in metoda else 'average'), labels=nazwy_krzywych, leaf_rotation=90, ax=ax)
             else:
+                dodane_do_legendy = set()
                 for i, col in enumerate(krzywe.columns):
-                    ax.plot(x, krzywe[col], color=cmap((numery_grup[i] - 1) % 10) if numery_grup[i]>0 else 'gray', alpha=0.6)
+                    klaster_id = numery_grup[i]
+                    kolor_id = (klaster_id - 1) % 10 if klaster_id > 0 else -1
+                    kolor = cmap(kolor_id) if klaster_id > 0 else 'gray'
+                    etykieta = f"Klaster {klaster_id}" if klaster_id > 0 else "Szum / Niesklasyfikowane"
+                    
+                    if klaster_id not in dodane_do_legendy:
+                        ax.plot(x, krzywe[col], color=kolor, alpha=0.6, label=etykieta)
+                        dodane_do_legendy.add(klaster_id)
+                    else:
+                        ax.plot(x, krzywe[col], color=kolor, alpha=0.6)
+                        
                 ax.grid(True, linestyle='--', alpha=0.5)
+                ax.legend(loc='upper right', bbox_to_anchor=(1.15, 1.0))
+                
             st.pyplot(fig)
             plt.close(fig)
 
             # =================================================================
-            # NOWY MODUŁ DIAGNOSTYCZNY: LEAVE-ONE-OUT (ANALIZA WPŁYWU)
+            # DYNAMICZNY OPIS KOLORÓW I SKŁADU KLASTRÓW POD WYKRESEM
             # =================================================================
-            st.write("---")
+            if not ("Hierarchiczna" in metoda and "+" not in metoda):
+                st.markdown("#### 📊 Szczegółowy skład wygenerowanych klastrów:")
+                NAZWY_KOLOROW = ["Niebieski", "Pomarańczowy", "Zielony", "Czerwony", "Fioletowy", "Brązowy", "Różowy", "Szary", "Oliwkowy", "Jasnoniebieski"]
+                
+                klastry_slownik = {}
+                for i, col in enumerate(krzywe.columns):
+                    k_id = numery_grup[i]
+                    if k_id not in klastry_slownik: klastry_slownik[k_id] = []
+                    klastry_slownik[k_id].append(str(col))
+                
+                posortowane_klastry = sorted(klastry_slownik.keys())
+                liczba_klastrow = len(posortowane_klastry)
+                
+                if liczba_klastrow > 0:
+                    kolumny_klastrow = st.columns(min(liczba_klastrow, 4))
+                    for idx, k_id in enumerate(posortowane_klastry):
+                        col_ui = kolumny_klastrow[idx % 4]
+                        with col_ui:
+                            if k_id == 0:
+                                st.markdown(f"**⚪ Szum / Odrzuty**")
+                                st.caption(f"Liczba krzywych: {len(klastry_slownik[k_id])}")
+                                st.code(", ".join(klastry_slownik[k_id]), language="text")
+                            else:
+                                n_koloru = NAZWY_KOLOROW[(k_id - 1) % 10]
+                                st.markdown(f"**🔹 Klaster {k_id}** ({n_koloru})")
+                                st.caption(f"Liczba krzywych: {len(klastry_slownik[k_id])}")
+                                st.code(", ".join(klastry_slownik[k_id]), language="text")
+                st.write("---")
+
+            # =================================================================
+            # SILNIK DIAGNOSTYCZNY: LEAVE-ONE-OUT (ANALIZA WPŁYWU)
+            # =================================================================
             with st.expander("🔍 Silnik Diagnostyczny AI: Znajdź anomalie psujące wynik", expanded=True):
                 st.markdown("Algorytm izoluje po kolei każdą krzywą z bazy danych, uruchamia grupowanie od nowa i bada, jak jej brak wpływa na globalny wskaźnik ARI.")
                 
                 wyniki_loo = []
                 N_samples = dane_do_algorytmu.shape[0]
                 
-                # Pętla diagnostyczna Leave-One-Out
                 for odrzucona_idx in range(N_samples):
                     maska = np.ones(N_samples, dtype=bool)
                     maska[odrzucona_idx] = False
