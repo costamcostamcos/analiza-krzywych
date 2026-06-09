@@ -71,12 +71,13 @@ class SiecSOM:
 # SŁOWNIK INTELIGENTNYCH OPISÓW METOD KLASTERYZACJI
 # =================================================================
 OPISY_METOD = {
-    "K-means": "Dzieli przestrzeń cech na tzw. obszary Voronoia. Algorytm dąży do minimalizacji wariancji wewnątrzklastrowej.",
     "Hierarchiczna Aglomeracyjna (metoda Warda)": "Twój obecny faworyt (82% ARI). Buduje drzewo powiązań od dołu do góry na podstawie minimalizacji przyrostu wariancji wewnątrzklastrowej. Doskonale radzi sobie ze zwartymi grupami.",
+    "Filtrowanie szumów (Rolling Mean) + Hierarchiczna (metoda Warda)": "Liniowa transformacja wygładzająca. Algorytm najpierw aplikuje okno kroczącej średniej (rolling mean), usuwając szum pomiarowy wysokiej częstotliwości z serii czasowej, a następnie grupuje klastry metodą Warda.",
     "PCA + Hierarchiczna (metoda Warda)": "Hybryda redukująca szum. Wyciąga kluczowe składowe sygnału (PCA), odrzucając drobne fluktuacje laboratoryjne, a następnie aplikuje kryterium Warda.",
     "UMAP + Hierarchiczna (metoda Warda)": "Potężna fuzja nieliniowa. UMAP makroskopowo zagęszcza i zbliża do siebie pokrewne profile krzywych w przestrzeni topologicznej, pozwalając metodzie Warda na bezbłędne wycięcie klastrów.",
     "SOM + Hierarchiczna (metoda Warda)": "Wykorzystuje topologiczną mapę Kohonena (SOM) do kompresji krzywych, a następnie buduje drzewo aglomeracyjne metodą Warda na bazie zestandaryzowanych wag neuronów.",
     "Spectral + Hierarchiczna (metoda Warda)": "Rzutuje krzywe do nieliniowej przestrzeni spektralnej grafu pokrewieństwa, po czym aplikuje hierarchiczne grupowanie Warda.",
+    "K-means": "Dzieli przestrzeń cech na tzw. obszary Voronoia. Algorytm dąży do minimalizacji wariancji wewnątrzklastrowej.",
     "UMAP + HDBSCAN (Hybryda Gęstościowa)": "Dwustopniowa hybryda nowej generacji. Najpierw rzutuje sygnał do przestrzeni topologicznej nieliniowej 2D (UMAP), a algorytm gęstościowy (HDBSCAN) wycina z nich grupy kształtów.",
     "Spectral + GMM (Hybryda Spektralno-Probabilistyczna)": "Mapuje powiązania grafowe poprzez dekompozycję wartości własnych, a następnie dopasowuje do nich elastyczne chmury probabilistyczne rozkładu normalnego (GMM).",
     "SOM + K-means (Hybryda sekwencyjna)": "Pierwszy etap wykorzystuje sieć neuronową Kohonena (SOM) do kompresji sygnału na siatkę topologiczną. Drugi etap uruchamia algorytm K-means na wagach neuronów.",
@@ -126,17 +127,24 @@ def inteligentne_pobranie_tabeli(df_raw):
     df_czysty = df_czysty.dropna(subset=[df_czysty.columns[0]])
     return df_czysty
 
-def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3):
+def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3, df_sygnaly_raw=None):
     if nazwa_metody == "K-means":
         return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(dane) + 1
         
+    elif "Filtrowanie szumów (Rolling Mean) + Hierarchiczna" in nazwa_metody:
+        # NOWA HYBRYDA LINIOWA: Rolling Mean na surowych krzywych -> Standaryzacja -> Ward
+        if df_sygnaly_raw is not None:
+            wygladzane = df_sygnaly_raw.rolling(window=5, center=True, min_periods=1).mean().T
+            dane_ward = StandardScaler().fit_transform(wygladzane)
+        else:
+            dane_ward = dane
+        return fcluster(linkage(dane_ward, method='ward'), t=k_grup, criterion='maxclust')
+
     elif "PCA + Hierarchiczna" in nazwa_metody:
-        # NOWA HYBRYDA: PCA (3 komponenty) + Ward
         komponenty_pca = PCA(n_components=min(3, dane.shape[1]), random_state=42).fit_transform(dane)
         return fcluster(linkage(komponenty_pca, method='ward'), t=k_grup, criterion='maxclust')
         
     elif "UMAP + Hierarchiczna" in nazwa_metody and umap_dostepne:
-        # NOWA HYBRYDA: UMAP (2D) + Ward
         przestrzen_2d = umap.UMAP(n_neighbors=15, min_dist=0.05, random_state=42).fit_transform(dane)
         return fcluster(linkage(przestrzen_2d, method='ward'), t=k_grup, criterion='maxclust')
         
@@ -184,7 +192,7 @@ def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3):
         W = NMF(n_components=k_grup, init='nndsvd', random_state=42, max_iter=200).fit_transform(dane_nmf)
         return np.argmax(W, axis=1) + 1
     elif "GMM" in nazwa_metody:
-        return GaussianMixture(n_components=k_grup, random_state=42, n_init=2).fit_predict(dane) + 1
+        return GaussianMixture(n_clusters=k_grup, random_state=42, n_init=2).fit_predict(dane) + 1
     elif "BGMM" in nazwa_metody:
         return BayesianGaussianMixture(n_components=k_grup, covariance_type='diag', weight_concentration_prior=1e-3, random_state=42, n_init=2).fit_predict(dane) + 1
     elif "metoda Warda" in nazwa_metody:
@@ -243,6 +251,7 @@ if df is not None:
         
         lista_metod = [
             "Hierarchiczna Aglomeracyjna (metoda Warda)",
+            "Filtrowanie szumów (Rolling Mean) + Hierarchiczna (metoda Warda)",
             "PCA + Hierarchiczna (metoda Warda)",
             "UMAP + Hierarchiczna (metoda Warda)",
             "SOM + Hierarchiczna (metoda Warda)",
@@ -364,7 +373,7 @@ if df is not None:
             else:
                 dane_do_algorytmu = StandardScaler().fit_transform(krzywe.T)
 
-            numery_grup = uruchom_silnik_klastrowania(metoda, dane_do_algorytmu, liczba_grup, liczba_grup)
+            numery_grup = uruchom_silnik_klastrowania(metoda, dane_do_algorytmu, liczba_grup, liczba_grup, df_sygnaly_raw=krzywe)
 
             ari_score = adjusted_rand_score(etykiety_eksperta, numery_grup) * 100
             nmi_score = normalized_mutual_info_score(etykiety_eksperta, numery_grup) * 100
@@ -395,7 +404,7 @@ if df is not None:
         rekordy_rankingu = []
         for m_nazwa in lista_metod:
             try:
-                pred_etykiety = uruchom_silnik_klastrowania(m_nazwa, dane_do_algorytmu, liczba_grup, liczba_grup)
+                pred_etykiety = uruchom_silnik_klastrowania(m_nazwa, dane_do_algorytmu, liczba_grup, liczba_grup, df_sygnaly_raw=krzywe)
                 m_ari = adjusted_rand_score(etykiety_eksperta, pred_etykiety) * 100
                 m_nmi = normalized_mutual_info_score(etykiety_eksperta, pred_etykiety) * 100
                 rekordy_rankingu.append({
