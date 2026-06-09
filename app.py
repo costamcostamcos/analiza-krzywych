@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as pd
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
@@ -9,6 +9,7 @@ from sklearn.metrics import silhouette_score, adjusted_rand_score, normalized_mu
 from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
 import io
 import numpy as np
+import streamlit as st
 
 # Bezpieczny import dla zaawansowanego algorytmu K-Shape
 try:
@@ -52,7 +53,7 @@ OPISY_METOD = {
     "DEC (Głębokie Uczenie - Sieć Neuronowa)": "Sztuczna sieć neuronowa (Autoenkoder) szkolona na bazie danych namnożonej przez augmentację sygnału (z 44 do 2200 krzywych).",
     "ADEC (Adwersarialne Głębokie Uczenie)": "Pojedynek adwersarialny enkodera i dyskryminatora zasilany sztucznie namnożonym zbiorem danych (2200 prób). Wymusza ostre i bardzo zwarte granice między grupami, całkowicie zapobiega przeuczeniu.",
     "RDEC (Regularizowane Głębokie Uczenie)": "Model DEC wyposażony w silne bariery regularyzacyjne (L2) oraz zaawansowany moduł augmentacji sygnału. Zmusza sieć neuronową do szukania najprostszych, najbardziej powtarzalnych wzorców geometrycznych fal.",
-    "ADClust (Automatyczne Głębokie Uczenie)": "Autonomiczny kombajn AI, który sam decyduje o liczbie grup za pomocą wskaźnika Silhouette, wykonując uprzednio proces głębokiego uczenia na 2200 wygenerowanych matematycznie wariantach."
+    "ADClust (Automatyczne Głębokie Uczenie)": "Autonomiczny kombajn AI, który sam decyduje o liczbie grup za pomocą wskaźnika Silhouette, wykonując uprzednio proces głębomkiego uczenia na 2200 wygenerowanych matematycznie wariantach."
 }
 
 # =================================================================
@@ -247,15 +248,15 @@ typ_zrodla = st.radio("Wybierz źródło danych:", ["Plik Excel (.xlsx)", "Link 
 
 df = None
 df_expert_raw = None
+file_id = "default"  # Identyfikator służący do unieważniania cache widgetu tabeli
 
 if typ_zrodla == "Plik Excel (.xlsx)":
     uploaded_file = st.file_uploader("Wgraj plik Excel", type=["xlsx"])
     if uploaded_file is not None:
-        # Odczyt surowego sygnału (Arkusz 1)
         df_raw = pd.read_excel(uploaded_file, sheet_name=0, header=None)
         df = inteligentne_pobranie_tabeli(df_raw)
+        file_id = f"local_{len(df_raw)}_{df_raw.iloc[0,0]}" # Generowanie unikalnego klucza pliku
         
-        # Elastyczne szukanie Ground Truth po nazwie lub pozycji
         try:
             excel_file = pd.ExcelFile(uploaded_file)
             if "Ground Truth" in excel_file.sheet_names:
@@ -269,10 +270,9 @@ else:
     if link_sheets and "docs.google.com/spreadsheets" in link_sheets:
         try:
             url_base = link_sheets.split("/edit")[0]
-            # Pobieramy główną tabelę pomiarów
             df = inteligentne_pobranie_tabeli(pd.read_excel(f"{url_base}/export?format=xlsx", sheet_name=0, header=None))
+            file_id = f"cloud_{link_sheets[-15:]}" # Generowanie unikalnego klucza chmury
             
-            # Wczytujemy plik jako pakiet arkuszy w celu dopasowania po nazwie tekstowej "Ground Truth"
             sheets_dict = pd.read_excel(f"{url_base}/export?format=xlsx", sheet_name=None)
             if "Ground Truth" in sheets_dict:
                 df_expert_raw = sheets_dict["Ground Truth"]
@@ -280,7 +280,7 @@ else:
                 keys = list(sheets_dict.keys())
                 df_expert_raw = sheets_dict[keys[1]]
         except Exception:
-            st.error("Nie udało się pobrać danych strukturalnych. Upewnij się, że arkusz jest udostępniony jako widoczny dla każdego posiadacza linku.")
+            st.error("Nie udało się pobrać danych strukturalnych. Sprawdź uprawnienia udostępniania linku.")
 
 if df is not None:
     try:
@@ -313,8 +313,9 @@ if df is not None:
             st.markdown("### Spodziewany Podział Grup")
             st.caption("Modyfikuj przypisania w locie na ekranie:")
             
-            # STABILNA INICJALIZACJA DANYCH EKSPERCKICH
-            if 'expert_dict' not in st.session_state:
+            # PARSOWANIE I UNIEWAŻNIANIE REJESTRÓW CACHE SESJI DLA NOWEGO PLIKU
+            cache_key = f"expert_df_{file_id}"
+            if cache_key not in st.session_state:
                 if df_expert_raw is not None and len(df_expert_raw) > 0:
                     df_expert_raw.columns = [str(c).strip() for c in df_expert_raw.columns]
                     col_k = df_expert_raw.columns[0]
@@ -324,9 +325,7 @@ if df is not None:
                     for _, row in df_expert_raw.iterrows():
                         raw_key = str(row[col_k]).strip().lower()
                         raw_val = str(row[col_g]).strip()
-                        
                         expert_mapping[raw_key] = raw_val
-                        # Inteligentne parowanie typów (Obsługa sytuacji gdy w Excelu jest np. liczba 1 zamiast tekstu y1)
                         if raw_key.isdigit():
                             expert_mapping[f"y{raw_key}"] = raw_val
                     
@@ -342,10 +341,17 @@ if df is not None:
                 else:
                     init_df = pd.DataFrame({"Krzywa": nazwy_krzywych, "Grupa Eksperta": ["a"] * len(nazwy_krzywych)})
                 
-                st.session_state.expert_dict = init_df
+                st.session_state[cache_key] = init_df
             
-            edited_gt = st.data_editor(st.session_state.expert_dict, use_container_width=True, hide_index=True, disabled=["Krzywa"])
-            st.session_state.expert_dict = edited_gt
+            # Wdrożenie dynamicznego klucza resetującego komponent
+            edited_gt = st.data_editor(
+                st.session_state[cache_key], 
+                use_container_width=True, 
+                hide_index=True, 
+                disabled=["Krzywa"],
+                key=f"editor_{file_id}"
+            )
+            st.session_state[cache_key] = edited_gt
             etykiety_eksperta = edited_gt["Grupa Eksperta"].astype(str).tolist()
 
         with col_main:
@@ -390,6 +396,7 @@ if df is not None:
             else:
                 dane_do_algorytmu = StandardScaler().fit_transform(krzywe.T)
 
+            # POPRAWKA LITERÓWKI W NAZWIE FUNKCJI
             numery_grup = uruchom_silnik_klastrowania(metoda, dane_do_algorytmu, liczba_grup, liczba_grup)
 
             ari_score = adjusted_rand_score(etykiety_eksperta, numery_grup) * 100
