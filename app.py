@@ -80,7 +80,7 @@ OPISY_METOD = {
     "K-means": "Dzieli przestrzeń cech na tzw. obszary Voronoia. Algorytm dąży do minimalizacji wariancji wewnątrzklastrowej.",
     "UMAP + HDBSCAN (Hybryda Gęstościowa)": "Dwustopniowa hybryda nowej generacji. Najpierw rzutuje sygnał do przestrzeni topologicznej nieliniowej 2D (UMAP), a algorytm gęstościowy (HDBSCAN) wycina z nich grupy kształtów.",
     "Spectral + GMM (Hybryda Spektralno-Probabilistyczna)": "Mapuje powiązania grafowe poprzez dekompozycję wartości własnych, a następnie dopasowuje do nich elastyczne chmury probabilistyczne rozkładu normalnego (GMM).",
-    "SOM + K-means (Hybryda sekwencyjna)": "Pierwszy etap wykorzystuje sieć neuronową Kohonena (SOM) do kompresji sygnału na siatkę topologiczną. Drugi etap uruchamia algorytm K-means na wagach neuronów.",
+    "SOM + K-means (Hybryda sekwencyjna)": "Pierwszy etap wykorzystuje sieć neuronową Kohonena (SOM) do kompresji sygnału na siatkę topologicznej. Drugi etap uruchamia algorytm K-means na wagach neuronów.",
     "Klastrowanie Konsensusowe (Ensemble Voting)": "Metoda komitetowa. Uruchamia równolegle K-Means, GMM, Spectral, Ward i buduje macierz współwystępowania. Ostateczny podział jest fuzją decyzji wszystkich modeli.",
     "NMF (Nieujemna Faktoryzacja Macierzy)": "Rozkłada macierz danych na iloczyn dwóch macierzy o elementach wyłącznie nieujemnych.",
     "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich (ok. 60% ARI). Próbuje dopasować elastyczne rozkłady normalne, dając miękkie przypisanie probabilistyczne.",
@@ -132,7 +132,6 @@ def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3, df_sy
         return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(dane) + 1
         
     elif "Filtrowanie szumów (Rolling Mean) + Hierarchiczna" in nazwa_metody:
-        # NOWA HYBRYDA LINIOWA: Rolling Mean na surowych krzywych -> Standaryzacja -> Ward
         if df_sygnaly_raw is not None:
             wygladzane = df_sygnaly_raw.rolling(window=5, center=True, min_periods=1).mean().T
             dane_ward = StandardScaler().fit_transform(wygladzane)
@@ -192,7 +191,7 @@ def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3, df_sy
         W = NMF(n_components=k_grup, init='nndsvd', random_state=42, max_iter=200).fit_transform(dane_nmf)
         return np.argmax(W, axis=1) + 1
     elif "GMM" in nazwa_metody:
-        return GaussianMixture(n_clusters=k_grup, random_state=42, n_init=2).fit_predict(dane) + 1
+        return GaussianMixture(n_components=k_grup, random_state=42, n_init=2).fit_predict(dane) + 1
     elif "BGMM" in nazwa_metody:
         return BayesianGaussianMixture(n_components=k_grup, covariance_type='diag', weight_concentration_prior=1e-3, random_state=42, n_init=2).fit_predict(dane) + 1
     elif "metoda Warda" in nazwa_metody:
@@ -394,6 +393,58 @@ if df is not None:
                 ax.grid(True, linestyle='--', alpha=0.5)
             st.pyplot(fig)
             plt.close(fig)
+
+            # =================================================================
+            # NOWY MODUŁ DIAGNOSTYCZNY: LEAVE-ONE-OUT (ANALIZA WPŁYWU)
+            # =================================================================
+            st.write("---")
+            with st.expander("🔍 Silnik Diagnostyczny AI: Znajdź anomalie psujące wynik", expanded=True):
+                st.markdown("Algorytm izoluje po kolei każdą krzywą z bazy danych, uruchamia grupowanie od nowa i bada, jak jej brak wpływa na globalny wskaźnik ARI.")
+                
+                wyniki_loo = []
+                N_samples = dane_do_algorytmu.shape[0]
+                
+                # Pętla diagnostyczna Leave-One-Out
+                for odrzucona_idx in range(N_samples):
+                    maska = np.ones(N_samples, dtype=bool)
+                    maska[odrzucona_idx] = False
+                    
+                    dane_sub = dane_do_algorytmu[maska]
+                    etykiety_eksperta_sub = [etykiety_eksperta[idx] for idx in range(N_samples) if maska[idx]]
+                    
+                    if "Filtrowanie szumów (Rolling Mean) + Hierarchiczna" in metoda:
+                        krzywe_sub = krzywe.iloc[:, maska]
+                    else:
+                        krzywe_sub = krzywe
+                        
+                    pred_sub = uruchom_silnik_klastrowania(metoda, dane_sub, liczba_grup, liczba_grup, df_sygnaly_raw=krzywe_sub)
+                    sub_ari = adjusted_rand_score(etykiety_eksperta_sub, pred_sub) * 100
+                    wplyw = sub_ari - ari_score
+                    
+                    wyniki_loo.append({
+                        "Odrzucona Krzywa": str(nazwy_krzywych[odrzucona_idx]),
+                        "Nowe ARI po usunięciu (%)": round(sub_ari, 2),
+                        "Wpływ na model": round(wplyw, 2)
+                    })
+                
+                df_loo = pd.DataFrame(wyniki_loo).sort_values(by="Wpływ na model", ascending=False).reset_index(drop=True)
+                
+                col_loo1, col_loo2 = st.columns(2)
+                with col_loo1:
+                    st.markdown("##### 🚨 „Czarne Owce” (Usunięcie tych krzywych PODNOSI wynik):")
+                    df_czarne = df_loo[df_loo["Wpływ na model"] > 0.01].reset_index(drop=True)
+                    if not df_czarne.empty:
+                        st.dataframe(df_czarne.style.format({"Wpływ na model": "+{:.2f}%"}), use_container_width=True, hide_index=True)
+                    else:
+                        st.info("Brak wyraźnych anomalii psujących wynik. Wszystkie krzywe wspierają model.")
+                        
+                with col_loo2:
+                    st.markdown("##### 🧱 „Filary Modelu” (Usunięcie tych krzywych drastycznie OBNIŻA wynik):")
+                    df_filary = df_loo[df_loo["Wpływ na model"] < -0.01].sort_values(by="Wpływ na model", ascending=True).reset_index(drop=True)
+                    if not df_filary.empty:
+                        st.dataframe(df_filary.style.format({"Wpływ na model": "{:.2f}%"}), use_container_width=True, hide_index=True)
+                    else:
+                        st.info("Brak kluczowych filarów – podział grup jest stabilny rozproszony.")
 
         # =================================================================
         # AUTOMATYCZNY RANKING METOD
