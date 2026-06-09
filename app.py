@@ -10,7 +10,7 @@ from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
 import io
 import numpy as np
 
-# Bezpieczny import dla UMAP (Uniform Manifold Approximation and Projection)
+# Bezpieczny import dla UMAP
 try:
     import umap
     umap_dostepne = True
@@ -42,10 +42,50 @@ st.set_page_config(
 )
 
 # =================================================================
+# IMPLEMENTACJA SIECI NEURONOWEJ SOM (SELF-ORGANIZING MAP)
+# =================================================================
+class SiecSOM:
+    """Natywna, wektorowa implementacja mapy samoorganizującej się Kohonena"""
+    def __init__(self, x_size=5, y_size=5, input_dim=43, lr=0.5, epochs=100, random_state=42):
+        self.x_size = x_size
+        self.y_size = y_size
+        self.input_dim = input_dim
+        self.lr = lr
+        self.epochs = epochs
+        self.random_state = random_state
+        
+        np.random.seed(self.random_state)
+        # Inicjalizacja wag neuronów
+        self.wagi = np.random.rand(x_size * y_size, input_dim)
+
+    def fit_predict_features(self, X):
+        N = X.shape[0]
+        # Prosty proces uczenia sieci Kohonena
+        for epoch in range(self.epochs):
+            biezacy_lr = self.lr * (1.0 - epoch / self.epochs)
+            for sample in X:
+                # Szukanie neuronu zwycięzcy (BMU - Best Matching Unit)
+                odleglosci = np.linalg.norm(self.wagi - sample, axis=1)
+                bmu_idx = np.argmin(odleglosci)
+                
+                # Aktualizacja wag zwycięzcy
+                self.wagi[bmu_idx] += biezacy_lr * (sample - self.wagi[bmu_idx])
+                
+        # Mapowanie danych do przestrzeni aktywowanych neuronów
+        aktywowane_cechy = np.zeros((N, self.input_dim))
+        for i, sample in enumerate(X):
+            odleglosci = np.linalg.norm(self.wagi - sample, axis=1)
+            bmu_idx = np.argmin(odleglosci)
+            aktywowane_cechy[i] = self.wagi[bmu_idx]
+            
+        return aktywowane_cechy
+
+# =================================================================
 # SŁOWNIK INTELIGENTNYCH OPISÓW METOD KLASTERYZACJI
 # =================================================================
 OPISY_METOD = {
     "K-means": "Dzieli przestrzeń cech na tzw. obszary Voronoia. Algorytm dąży do minimalizacji wariancji wewnątrzklastrowej poprzez naprzemienne przypisywanie obiektów do najbliższych prototypów (środków ciężkości) i aktualizację tych środków.",
+    "SOM + K-means (Hybryda sekwencyjna)": "Dwuetapowa metoda hybrydowa. Pierwszy etap wykorzystuje sieć neuronową Kohonena (SOM) do nieliniowego odwzorowania i kompresji skomplikowanego sygnału na topologiczną siatkę cech. Drugi etap uruchamia algorytm K-means na wagach aktywowanych neuronów, precyzyjnie porządkując linie graniczne klastrów.",
     "Klastrowanie Konsensusowe (Ensemble Voting)": "Metoda komitetowa (Ensemble Learning). Uruchamia równolegle zróżnicowany zestaw algorytmów (K-Means, GMM, Spectral, Ward) i buduje macierz współwystępowania, rejestrującą jak często dane dwie krzywe były przypisywane do jednej grupy. Ostateczny podział jest fuzją decyzji wszystkich modeli.",
     "PSO (Optymalizacja Rojem Cząstek)": "Metaheurystyka inspirowana naturą, imitująca zachowanie stada ptaków. Zamiast pojedynczego punktu startowego, w wielowymiarowej przestrzeni porusza się populacja (rój) cząstek-zwiadowców.",
     "NMF (Nieujemna Faktoryzacja Macierzy)": "Algorytm nieliniowej redukcji wymiarowości, który rozkłada macierz danych na iloczyn dwóch macierzy o elementach wyłącznie nieujemnych. Traktuje Twoje krzywe jako kombinację liniową bazowych, nieujemnych klocków sygnałowych.",
@@ -68,7 +108,7 @@ OPISY_METOD = {
 OPISY_PREPROCESSING = {
     "Standardowa": "Polega na klasycznej standaryzacji (Z-score). Sprowadza wszystkie punkty pomiarowe krzywych do wspólnej skali statystycznej (średnia=0, odchylenie=1).",
     "Analiza trendu": "Wyznacza różnice skończone (pochodne pierwszego rzędu) pomiędzy sąsiednimi punktami wzdłuż osi X. Algorytmy badają prędkość narastania i opadania sygnału.",
-    "UMAP (Redukcja topologiczna)": "Uniform Manifold Approximation and Projection. Zaawansowana, nieliniowa redukcja wymiarowości oparta na geometrii różniczkowej. Mapuje wielowymiarowe krzywe do 2 najsilniejszych składowych topologicznych, idealnie zachowując relacje globalne i lokalne.",
+    "UMAP (Redukcja topologiczna)": "Uniform Manifold Approximation and Projection. Zaawansowana, nieliniowa redukcja wymiarowości oparta na geometrii różniczkowej. Mapuje wielowymiarowe krzywe do 2 najsilniejszych składowych topologicznych.",
     "FeatureExtraction": "Głęboka transformacja inżynierska 3D: Max, Pozycja X, Średnia, Std, Skośność, Kurtoza, pierwsze 3 harmoniczne FFT oraz 3 wskaźniki DWT Haar (Aproksymacja i Detale).",
     "MinMaxScaler": "Dokonuje liniowej transformacji danych, przesuwając i skalując wartości każdej krzywej tak, aby zamknęły się w ścisłym przedziale od 0 do 1.",
     "Filtrowanie szumów": "Wykorzystuje algorytm kroczącego okna średniej (rolling window). Skutecznie odcina fluktuacje wysokiej częstotliwości i przypadkowe szpilki pomiarowe."
@@ -117,84 +157,17 @@ def augmentuj_dane(X_oryginalne, czynniki_kopii=50, noise_level=0.02, scale_rang
         X_namnozone.append(kopia)
     return np.vstack(X_namnozone)
 
-# =================================================================
-# IMPLEMENTACJA ALGORYTMU ROJU CZĄSTEK (PSO CLUSTERING)
-# =================================================================
-class PSOClustering:
-    def __init__(self, n_clusters, n_particles=15, max_iter=30, random_state=42):
-        self.n_clusters = n_clusters
-        self.n_particles = n_particles
-        self.max_iter = max_iter
-        self.random_state = random_state
-        
-    def _compute_sse(self, X, centroids):
-        distances = np.linalg.norm(X[:, np.newaxis, :] - centroids, axis=2)
-        labels = np.argmin(distances, axis=1)
-        min_distances = np.min(distances, axis=1)
-        return np.sum(min_distances ** 2), labels
-
-    def fit_predict(self, X):
-        np.random.seed(self.random_state)
-        N, F = X.shape
-        K = self.n_clusters
-        positions = np.zeros((self.n_particles, K, F))
-        for i in range(self.n_particles):
-            idx = np.random.choice(N, K, replace=False)
-            positions[i] = X[idx]
-        velocities = np.zeros_like(positions)
-        pbest_positions = np.copy(positions)
-        pbest_fitness = np.full(self.n_particles, np.inf)
-        gbest_position = None
-        gbest_fitness = np.inf
-        
-        for i in range(self.n_particles):
-            fit, _ = self._compute_sse(X, positions[i])
-            pbest_fitness[i] = fit
-            if fit < gbest_fitness:
-                gbest_fitness = fit
-                gbest_position = np.copy(positions[i])
-                
-        w, c1, c2 = 0.729, 1.494, 1.494
-        for iteration in range(self.max_iter):
-            r1 = np.random.rand(self.n_particles, K, 1)
-            r2 = np.random.rand(self.n_particles, K, 1)
-            velocities = (w * velocities + c1 * r1 * (pbest_positions - positions) + c2 * r2 * (gbest_position[np.newaxis, :, :] - positions))
-            positions += velocities
-            for i in range(self.n_particles):
-                fit, _ = self._compute_sse(X, positions[i])
-                if fit < pbest_fitness[i]:
-                    pbest_fitness[i] = fit
-                    pbest_positions[i] = np.copy(positions[i])
-                if fit < gbest_fitness:
-                    gbest_fitness = fit
-                    gbest_position = np.copy(positions[i])
-        _, labels = self._compute_sse(X, gbest_position)
-        return labels + 1
-
-# =================================================================
-# ARCHITEKTURY SIECI NEURONOWYCH (DLA ENKODERÓW AI)
-# =================================================================
-if pytorch_dostepne:
-    class AutoencoderKrzywych(nn.Module):
-        def __init__(self, input_dim, latent_dim=4):
-            super(AutoencoderKrzywych, self).__init__()
-            self.encoder = nn.Sequential(nn.Linear(input_dim, 32), nn.ReLU(), nn.Linear(32, latent_dim))
-            self.decoder = nn.Sequential(nn.Linear(latent_dim, 32), nn.ReLU(), nn.Linear(32, input_dim))
-        def forward(self, x):
-            latent = self.encoder(x)
-            reconstructed = self.decoder(latent)
-            return latent, reconstructed
-
-    class DiscriminatorADEC(nn.Module):
-        def __init__(self, latent_dim=4):
-            super(DiscriminatorADEC, self).__init__()
-            self.model = nn.Sequential(nn.Linear(latent_dim, 16), nn.ReLU(), nn.Linear(16, 1), nn.Sigmoid())
-        def forward(self, x):
-            return self.model(x)
-
 def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3):
     if nazwa_metody == "K-means":
         return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(dane) + 1
+        
+    elif "SOM + K-means" in nazwa_metody:
+        # KROK 1 HYBRYDY: Transformacja sygnału przez sieć neuronową SOM Kohonena
+        model_som = SiecSOM(x_size=5, y_size=5, input_dim=dane.shape[1], epochs=50, random_state=42)
+        cechy_som = model_som.fit_predict_features(dane)
+        # KROK 2 HYBRYDY: Ostateczny podział K-means na skompresowanej mapie topologicznej
+        return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(cechy_som) + 1
+        
     elif "Konsensusowe" in nazwa_metody:
         N = dane.shape[0]
         matrix = np.zeros((N, N))
@@ -244,9 +217,7 @@ def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3):
     else:
         return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(dane) + 1
 
-# =================================================================
-# SEKCJA INTERFEJSU UŻYTKOWNIKA (UI) STREAMLIT
-# =================================================================
+# If data is ready
 st.write("### Ustawienia analizy")
 typ_zrodla = st.radio("Wybierz źródło danych:", ["Plik Excel (.xlsx)", "Link do Google Sheets"], horizontal=True)
 
@@ -292,11 +263,11 @@ if df is not None:
         krzywe = df.iloc[:, 1:]
         nazwy_krzywych = krzywe.columns.tolist()
         
-        lista_metod = ["K-means", "Klastrowanie Konsensusowe (Ensemble Voting)", "PSO (Optymalizacja Rojem Cząstek)", "NMF (Nieujemna Faktoryzacja Macierzy)", "GMM (Probabilistyczna)", "BGMM (Bayesowski GMM)", "Hierarchiczna Aglomeracyjna (metoda Warda)", "Hierarchiczna Korelacyjna (metoda średnich)", "HDBSCAN (Gęstościowa - Auto K)", "Spectral Clustering"]
+        # DODANO DO LISTY NOWĄ METODĘ HYBRYDOWĄ
+        lista_metod = ["K-means", "SOM + K-means (Hybryda sekwencyjna)", "Klastrowanie Konsensusowe (Ensemble Voting)", "PSO (Optymalizacja Rojem Cząstek)", "NMF (Nieujemna Faktoryzacja Macierzy)", "GMM (Probabilistyczna)", "BGMM (Bayesowski GMM)", "Hierarchiczna Aglomeracyjna (metoda Warda)", "Hierarchiczna Korelacyjna (metoda średnich)", "HDBSCAN (Gęstościowa - Auto K)", "Spectral Clustering"]
         if tslearn_dostepne: lista_metod.append("K-Shape (Kształt fali)")
         if pytorch_dostepne: lista_metod.extend(["DEC (Głębokie Uczenie - Sieć Neuronowa)", "ADEC (Adwersarialne Głębokie Uczenie)", "RDEC (Regularizowane Głębokie Uczenie)", "ADClust (Automatyczne Głębokie Uczenie)"])
 
-        # Budowa listy preprocessingów dynamicznie na podstawie dostępności bibliotek
         lista_preprocessingow = ["Standardowa", "Analiza trendu"]
         if umap_dostepne:
             lista_preprocessingow.append("UMAP (Redukcja topologiczna)")
@@ -327,7 +298,6 @@ if df is not None:
             st.markdown("### Spodziewany Podział Grup")
             st.caption("Modyfikuj przypisania w locie na ekranie:")
             
-            # --- SEKCJA BAZY NA SZTYWNO (GROUND TRUTH SAFE-LOCK) ---
             sztywny_podzial_eksperta = {}
             for i in range(1, 44):
                 if i <= 17: sztywny_podzial_eksperta[f"y{i}"] = "a"
@@ -379,7 +349,6 @@ if df is not None:
             )
             st.session_state["tabela_editor_state"] = edited_gt
             etykiety_eksperta = edited_gt["Grupa Eksperta"].astype(str).tolist()
-            # ------------------------------------------------------------------
 
         with col_main:
             with st.expander("Kompleksowy Opis Metodologiczny (Teoria & Synergia Operacyjna)", expanded=True):
@@ -396,7 +365,6 @@ if df is not None:
                 dane_do_algorytmu = StandardScaler().fit_transform(krzywe.diff(axis=0).fillna(0).T)
             elif optymalizacja == "UMAP (Redukcja topologiczna)" and umap_dostepne:
                 baza_skalowana = StandardScaler().fit_transform(krzywe.T)
-                # Redukcja do 2 komponentów nieliniowych za pomocą UMAP
                 dane_do_algorytmu = umap.UMAP(n_neighbors=15, min_dist=0.1, random_state=42).fit_transform(baza_skalowana)
             elif optymalizacja == "FeatureExtraction":
                 cechy = pd.DataFrame(index=nazwy_krzywych)
