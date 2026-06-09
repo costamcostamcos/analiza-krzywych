@@ -309,14 +309,16 @@ if df is not None:
             st.markdown("### Spodziewany Podział Grup")
             st.caption("Modyfikuj przypisania w locie na ekranie:")
             
-            cache_key = f"expert_df_{file_id}"
-            if cache_key not in st.session_state:
+            # --- ZMIANA REWOLUCYJNA: NOWA DETEKCJA PASZPORTU I KONTROLI CACHE ---
+            klucz_pliku = f"last_loaded_{file_id}"
+            if klucz_pliku not in st.session_state:
+                st.session_state[klucz_pliku] = True
+                
                 if df_expert_raw is not None and len(df_expert_raw) > 0:
                     df_expert_raw.columns = [str(c).strip() for c in df_expert_raw.columns]
                     col_k = df_expert_raw.columns[0]
                     col_g = df_expert_raw.columns[1]
                     
-                    # Pancerne wyrównanie formatów tekstowych bez spacji
                     expert_mapping = {}
                     for _, row in df_expert_raw.iterrows():
                         key_str = str(row[col_k]).strip().lower()
@@ -328,24 +330,26 @@ if df is not None:
                         norm_name = str(name).strip().lower()
                         expert_list.append(expert_mapping.get(norm_name, "a"))
                         
-                    init_df = pd.DataFrame({
-                        "Krzywa": nazwy_krzywych,
+                    st.session_state["tabela_editor_state"] = pd.DataFrame({
+                        "Krzywa": [str(n) for n in nazwy_krzywych],
                         "Grupa Eksperta": expert_list
                     })
                 else:
-                    init_df = pd.DataFrame({"Krzywa": nazwy_krzywych, "Grupa Eksperta": ["a"] * len(nazwy_krzywych)})
-                
-                st.session_state[cache_key] = init_df
+                    st.session_state["tabela_editor_state"] = pd.DataFrame({
+                        "Krzywa": [str(n) for n in nazwy_krzywych], 
+                        "Grupa Eksperta": ["a"] * len(nazwy_krzywych)
+                    })
             
             edited_gt = st.data_editor(
-                st.session_state[cache_key], 
+                st.session_state["tabela_editor_state"], 
                 use_container_width=True, 
                 hide_index=True, 
                 disabled=["Krzywa"],
-                key=f"editor_widget_{file_id}"
+                key="widget_editor_krzywych"
             )
-            st.session_state[cache_key] = edited_gt
+            st.session_state["tabela_editor_state"] = edited_gt
             etykiety_eksperta = edited_gt["Grupa Eksperta"].astype(str).tolist()
+            # ------------------------------------------------------------------
 
         with col_main:
             with st.expander("Kompleksowy Opis Metodologiczny (Teoria & Synergia Operacyjna)", expanded=True):
