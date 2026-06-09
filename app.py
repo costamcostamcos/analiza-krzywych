@@ -33,10 +33,10 @@ except ImportError:
 # =================================================================
 OPISY_METOD = {
     "K-means": "Dzieli przestrzeń cech na tzw. obszary Voronoia. Algorytm dąży do minimalizacji wariancji wewnątrzklastrowej poprzez naprzemienne przypisywanie obiektów do najbliższych prototypów (środków ciężkości) i aktualizację tych środków.",
-    "Klastrowanie Konsensusowe (Ensemble Voting)": "Metoda komitetowa (Ensemble Learning). Uruchamia równolegle zróżnicowany zestaw algorytmów (K-Means, GMM, Spectral, Ward) i buduje 'macierz współwystępowania', rejestrującą jak często dane dwie krzywe były przypisywane do jednej grupy. Ostateczny podział jest fuzją decyzji wszystkich modeli.",
+    "Klastrowanie Konsensusowe (Ensemble Voting)": "Metoda komitetowa (Ensemble Learning). Uruchamia równolegle zróżnicowany zestaw algorytmów (K-Means, GMM, Spectral, Ward) i buduje macierz współwystępowania, rejestrującą jak często dane dwie krzywe były przypisywane do jednej grupy. Ostateczny podział jest fuzją decyzji wszystkich modeli.",
     "PSO (Optymalizacja Rojem Cząstek)": "Metaheurystyka inspirowana naturą, imitująca zachowanie stada ptaków. Zamiast pojedynczego punktu startowego, w wielowymiarowej przestrzeni porusza się populacja (rój) cząstek-zwiadowców.",
-    "NMF (Nieujemna Faktoryzacja Macierzy)": "Algorytm nieliniowej redukcji wymiarowości, który rozkłada macierz danych na iloczyn dwóch macierzy o elementach wyłącznie nieujemnych. Traktuje Twoje krzywe jako kombinację liniową bazowych, nieujemnych 'klocków' sygnałowych.",
-    "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich. Zakłada, że struktura danych pod wejściem składa się z określonej liczby wielowymiarowych rozkładów normalnych. Realizuje tzw. 'miękkie przypisanie' (soft clustering).",
+    "NMF (Nieujemna Faktoryzacja Macierzy)": "Algorytm nieliniowej redukcji wymiarowości, który rozkłada macierz danych na iloczyn dwóch macierzy o elementach wyłącznie nieujemnych. Traktuje Twoje krzywe jako kombinację liniową bazowych, nieujemnych klocków sygnałowych.",
+    "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich. Zakłada, że struktura danych pod wejściem składa się z określonej liczby wielowymiarowych rozkładów normalnych. Realizuje tzw. miękkie przypisanie (soft clustering).",
     "BGMM (Bayesowski GMM)": "Rozszerzenie GMM o probabilistyczną Bayesowską z procesem Dirichleta. Traktuje parametry klastrów jako zmienne losowe. Automatycznie wygasza niepotrzebne klastry.",
     "Hierarchiczna Aglomeracyjna (metoda Warda)": "Algorytm budujący drzewo powiązań od dołu do góry. Każda krzywa startuje jako osobny klaster, a w kolejnych krokach łączone są grupy, które generują najmniejszy możliwy wzrost całkowitej wariancji wewnątrzklastrowej.",
     "Hierarchiczna Korelacyjna (metoda średnich)": "Podejście hierarchiczne (UPGMA), które zamiast klasycznej odległości przestrzennej mierzy stopień współliniowości wykresów za pomocą odległości korelacyjnej (1 - r Pearsona).",
@@ -61,7 +61,7 @@ OPISY_PREPROCESSING = {
 }
 
 # =================================================================
-# GLOBALNE FUNKCJE POMOCNICZE (ZADEKLAROWANE NA SAMYM GÓRZE PLIKU)
+# GLOBALNE FUNKCJE POMOCNICZE
 # =================================================================
 def inteligentne_pobranie_tabeli(df_raw):
     df_raw = df_raw.dropna(how='all', axis=0).dropna(how='all', axis=1)
@@ -234,7 +234,7 @@ def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3):
 # =================================================================
 # SEKCJA INTERFEJSU UŻYTKOWNIKA (UI) STREAMLIT
 # =================================================================
-st.write("### ⚙️ Ustawienia analizy")
+st.write("### Ustawienia analizy")
 typ_zrodla = st.radio("Wybierz źródło danych:", ["Plik Excel (.xlsx)", "Link do Google Sheets"], horizontal=True)
 
 df = None
@@ -270,8 +270,8 @@ if df is not None:
         col_main, col_sidebar = st.columns([3, 1])
         
         with col_sidebar:
-            st.markdown("### 👩‍🔬 Osąd Prowadzącego Doświadczenie")
-            st.caption("Wpisz litery (a, b, c, d, e...) odpowiadające rzeczywistym grupom krzywych wg Twojej wiedzy:")
+            st.markdown("### Spodziewany Podział Grup")
+            st.caption("Wpisz litery (a, b, c, d, e...) odpowiadające rzeczywistym grupom krzywych:")
             if 'expert_dict' not in st.session_state or len(st.session_state.expert_dict) != len(nazwy_krzywych):
                 st.session_state.expert_dict = pd.DataFrame({"Krzywa": nazwy_krzywych, "Grupa Eksperta": ["a"] * len(nazwy_krzywych)})
             
@@ -280,16 +280,16 @@ if df is not None:
             etykiety_eksperta = edited_gt["Grupa Eksperta"].astype(str).tolist()
 
         with col_main:
-            with st.expander("📚 Kompleksowy Opis Metodologiczny (Teoria & Synergia)", expanded=True):
+            with st.expander("Kompleksowy Opis Metodologiczny (Teoria & Synergia Operacyjna)", expanded=True):
                 c_d1, c_d2 = st.columns(2)
                 with c_d1:
-                    st.markdown(f"#### 🤖 Algorytm Główny: `{metoda}`")
+                    st.markdown(f"#### Algorytm Główny: `{metoda}`")
                     st.write(OPISY_METOD.get(metoda, ""))
                 with c_d2:
-                    st.markdown(f"#### ⚙️ Obróbka Wstępna: `{optymalizacja}`")
+                    st.markdown(f"#### Obróbka Wstępna: `{optymalizacja}`")
                     st.write(OPISY_PREPROCESSING.get(optymalizacja, ""))
 
-            # PRZETWARZANIE OBRÓBKI MATEMATYCZNEJ SYGNAŁU
+            # PRZETWARZANIE DANYCH WEJŚCIOWYCH
             if optymalizacja == "Analiza trendu":
                 dane_do_algorytmu = StandardScaler().fit_transform(krzywe.diff(axis=0).fillna(0).T)
             elif optymalizacja == "FeatureExtraction":
@@ -326,10 +326,20 @@ if df is not None:
             ari_score = adjusted_rand_score(etykiety_eksperta, numery_grup) * 100
             nmi_score = normalized_mutual_info_score(etykiety_eksperta, numery_grup) * 100
             
-            st.markdown(f"### 🎯 Skuteczność dopasowania do kryteriów Prowadzącego:")
+            st.markdown(f"### Skuteczność dopasowania do kryteriów spodziewanego podziału:")
             kpi_ari, kpi_nmi = st.columns(2)
-            kpi_ari.metric("Indeks ARI (Zgodność par obiektów)", f"{ari_score:.1f}%")
-            kpi_nmi.metric("Indeks NMI (Zbieżność informacji sygnału)", f"{nmi_score:.1f}%")
+            
+            # DODANIE DYMKÓW Z OPISAMI MATEMATYCZNYMI WSKAŹNIKÓW (ARGUMENT HELP)
+            kpi_ari.metric(
+                "Indeks ARI (Zgodność par obiektów)", 
+                f"{ari_score:.1f}%",
+                help="Adjusted Rand Index (ARI): Miara zgodności podziału dokonanego przez algorytm ze spodziewanym podziałem. Wartość jest korygowana o losowe prawdopodobieństwo trafienia. Przyjmuje wartości z przedziału [-1, 1], gdzie 1 oznacza idealną zbieżność par obiektów."
+            )
+            kpi_nmi.metric(
+                "Indeks NMI (Zbieżność informacji sygnału)", 
+                f"{nmi_score:.1f}%",
+                help="Normalized Mutual Information (NMI): Miara oparta na teorii informacji (entropii), określająca jak dużo wiedzy o podziale spodziewanym dostarcza podział wyznaczony przez model. Wynik jest normalizowany do przedziału [0, 1] (lub 0-100%)."
+            )
 
             wyniki = pd.DataFrame({'Krzywa': nazwy_krzywych, 'Numer Grupy': numery_grup}).sort_values(by='Numer Grupy')
             fig, ax = plt.subplots(figsize=(10, 4.5))
@@ -343,31 +353,34 @@ if df is not None:
             st.pyplot(fig)
             plt.close(fig)
 
-        # AUTOMATYCZNY RANKING METOD (LEADERBOARD)
+        # =================================================================
+        # RANKING METOD
+        # =================================================================
         st.write("---")
-        st.subheader("🏆 Automatyczny Ranking Skuteczności Algorytmów AI")
-        tryb_porownania = st.radio("Wybierz tryb zestawienia rankingu:", ["Porównaj WSZYSTKIE dostępne metody chmury", "Wybierz tylko określone metody do porównania"], horizontal=True)
-        metody_do_testu = lista_metod if "WSZYSTKIE" in tryb_porownania else st.multiselect("Zaznacz metody, które chcesz poddać testowi rywalizacji:", lista_metod, default=lista_metod[:3])
+        st.subheader("Ranking Skuteczności Algorytmów")
         
-        if st.button("🚀 Uruchom Wielki Turniej Algorytmów AI") and len(metody_do_testu) > 0:
-            rekordy_rankingu = []
-            pasek_postepu = st.progress(0)
-            for idx, m_nazwa in enumerate(metody_do_testu):
-                try:
-                    pred_etykiety = uruchom_silnik_klastrowania(m_nazwa, dane_do_algorytmu, liczba_grup, liczba_grup)
-                    m_ari = adjusted_rand_score(etykiety_eksperta, pred_etykiety) * 100
-                    m_nmi = normalized_mutual_info_score(etykiety_eksperta, pred_etykiety) * 100
-                    rekordy_rankingu.append({"Algorytm AI": m_nazwa, "Zgodność ARI (%)": round(m_ari, 2), "Zbieżność Informacji NMI (%)": round(m_nmi, 2), "Średnia Skuteczność (%)": round((m_ari + m_nmi) / 2, 2)})
-                except Exception: pass
-                pasek_postepu.progress((idx + 1) / len(metody_do_testu))
-            df_leaderboard = pd.DataFrame(rekordy_rankingu).sort_values(by="Średnia Skuteczność (%)", ascending=False).reset_index(drop=True)
-            df_leaderboard.index += 1
-            st.table(df_leaderboard)
+        rekordy_rankingu = []
+        for m_nazwa in lista_metod:
+            try:
+                pred_etykiety = uruchom_silnik_klastrowania(m_nazwa, dane_do_algorytmu, liczba_grup, liczba_grup)
+                m_ari = adjusted_rand_score(etykiety_eksperta, pred_etykiety) * 100
+                m_nmi = normalized_mutual_info_score(etykiety_eksperta, pred_etykiety) * 100
+                rekordy_rankingu.append({
+                    "Algorytm AI": m_nazwa, 
+                    "Zgodność ARI (%)": round(m_ari, 2), 
+                    "Zbieżność Informacji NMI (%)": round(m_nmi, 2), 
+                    "Średnia Skuteczność (%)": round((m_ari + m_nmi) / 2, 2)
+                })
+            except Exception: pass
+            
+        df_leaderboard = pd.DataFrame(rekordy_rankingu).sort_values(by="Średnia Skuteczność (%)", ascending=False).reset_index(drop=True)
+        df_leaderboard.index += 1
+        st.table(df_leaderboard)
 
         # Sekcje podpowiedzi matematycznych
         if "HDBSCAN" not in metoda and "ADClust" not in metoda:
-            with st.expander("🔍 Zaawansowana Podpowiedź Matematyczna (Dobór liczby klastrów K)", expanded=False):
-                t_elb, t_sil, t_bic, t_gap = st.tabs(["📐 Metoda Łokcia & Kneedle", "👤 Silhouette Score", "🔮 Indeks BIC", "📊 Statystyka Gap"])
+            with st.expander("Zaawansowana Podpowiedź Matematyczna (Dobór liczby klastrów K)", expanded=False):
+                t_elb, t_sil, t_bic, t_gap = st.tabs(["Metoda Łokcia & Kneedle", "Silhouette Score", "Indeks BIC", "Statystyka Gap"])
                 z_k = range(2, 11)
                 iner, silh, bics = [], [], []
                 for k in z_k:
@@ -380,7 +393,7 @@ if df is not None:
                 with t_elb:
                     p1, p2 = np.array([z_k[0], iner[0]]), np.array([z_k[-1], iner[-1]])
                     k_k = z_k[np.argmax([np.abs(np.cross(p2 - p1, p1 - np.array([k, iner[i]]))) / np.linalg.norm(p2 - p1) for i, k in enumerate(z_k)])]
-                    st.info(f"✨ Kneedle sugeruje: **K = {k_k}**.")
+                    st.info(f"Kneedle sugeruje: K = {k_k}.")
                     fig_e, ax_e = plt.subplots(figsize=(10, 2.5))
                     ax_e.plot(z_k, iner, 'ro-')
                     ax_e.axvline(x=k_k, color='purple', linestyle='--')
@@ -405,7 +418,7 @@ if df is not None:
                     ok_g = z_k[-1]
                     for idx in range(len(z_k)-1):
                         if gaps[idx] >= gaps[idx+1] - sk[idx+1]: ok_g = z_k[idx]; break
-                    st.info(f"✨ Reguła Tibshiraniego sugeruje: **K = {ok_g}**.")
+                    st.info(f"Reguła Tibshiraniego sugeruje: K = {ok_g}.")
                     fig_g, (ax_g1, ax_g2) = plt.subplots(1, 2, figsize=(11, 2.8))
                     ax_g1.plot(z_k, np.mean(log_Wk_ref, axis=0), 'co-', label='Szum')
                     ax_g1.plot(z_k, log_Wk, 'yo-', label='Dane')
@@ -414,4 +427,4 @@ if df is not None:
 
     except Exception as ob_blad: st.error(f"Błąd krytyczny aplikacji: {ob_blad}")
 else:
-    st.info("💡 Aby rozpocząć, wgraj plik z dysku lub wklej link do Google Sheets powyżej.")
+    st.info("Aby rozpocząć, wgraj plik z dysku lub wklej link do Google Sheets powyżej.")
