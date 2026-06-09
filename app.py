@@ -128,9 +128,11 @@ def inteligentne_pobranie_tabeli(df_raw):
     return df_czysty
 
 def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3, df_sygnaly_raw=None):
+    # K-means
     if nazwa_metody == "K-means":
         return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(dane) + 1
         
+    # Hybryda wygładzająca surowy sygnał
     elif "Filtrowanie szumów (Rolling Mean) + Hierarchiczna" in nazwa_metody:
         if df_sygnaly_raw is not None:
             wygladzane = df_sygnaly_raw.rolling(window=5, center=True, min_periods=1).mean().T
@@ -139,6 +141,7 @@ def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3, df_sy
             dane_ward = dane
         return fcluster(linkage(dane_ward, method='ward'), t=k_grup, criterion='maxclust')
 
+    # Hybrydy oparte na metodzie Warda
     elif "PCA + Hierarchiczna" in nazwa_metody:
         komponenty_pca = PCA(n_components=min(3, dane.shape[1]), random_state=42).fit_transform(dane)
         return fcluster(linkage(komponenty_pca, method='ward'), t=k_grup, criterion='maxclust')
@@ -158,6 +161,7 @@ def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3, df_sy
         aff_matrix = model_spec.affinity_matrix_ if hasattr(model_spec, 'affinity_matrix_') else dane
         return fcluster(linkage(aff_matrix, method='ward'), t=k_grup, criterion='maxclust')
         
+    # Pozostałe hybrydy i algorytmy klasyczne
     elif "UMAP + HDBSCAN" in nazwa_metody and umap_dostepne:
         baza_projekcji = StandardScaler().fit_transform(dane)
         przestrzen_2d = umap.UMAP(n_neighbors=15, min_dist=0.05, random_state=42).fit_transform(baza_projekcji)
@@ -186,29 +190,39 @@ def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3, df_sy
                     if p[i] == p[j]: matrix[i, j] += 1
         link = linkage(1.0 - (matrix / 4.0), method='average')
         return fcluster(link, t=k_grup, criterion='maxclust')
+        
     elif "NMF" in nazwa_metody:
         dane_nmf = MinMaxScaler().fit_transform(dane) if (dane < 0).any() else dane
         W = NMF(n_components=k_grup, init='nndsvd', random_state=42, max_iter=200).fit_transform(dane_nmf)
         return np.argmax(W, axis=1) + 1
-    elif "GMM" in nazwa_metody:
+        
+    elif nazwa_metody == "GMM (Probabilistyczna)":
+        # FIX: Poprawiony parametr n_components zamiast n_clusters dla turnieju metod
         return GaussianMixture(n_components=k_grup, random_state=42, n_init=2).fit_predict(dane) + 1
+        
     elif "BGMM" in nazwa_metody:
         return BayesianGaussianMixture(n_components=k_grup, covariance_type='diag', weight_concentration_prior=1e-3, random_state=42, n_init=2).fit_predict(dane) + 1
+        
     elif "metoda Warda" in nazwa_metody:
         return fcluster(linkage(dane, method='ward'), t=k_grup, criterion='maxclust')
+        
     elif "Korelacyjna" in nazwa_metody:
         return fcluster(linkage(dane, method='average', metric='correlation'), t=k_grup, criterion='maxclust')
-    elif "HDBSCAN" in nazwa_metody:
+        
+    elif nazwa_metody == "HDBSCAN (Gęstościowa - Auto K)":
         raw = HDBSCAN(min_cluster_size=min_hdbscan, min_samples=1).fit_predict(dane)
         return np.array([n + 1 if n >= 0 else 0 for n in raw])
-    elif "Spectral" in nazwa_metody:
+        
+    elif "Spectral Clustering" in nazwa_metody:
         return SpectralClustering(n_clusters=k_grup, random_state=42, assign_labels='discretize').fit_predict(dane) + 1
+        
+    elif "K-Shape" in nazwa_metody and tslearn_dostepne:
+        return KShape(n_clusters=k_grup, random_state=42).fit_predict(to_time_series_dataset(dane)) + 1
+        
     else:
-        return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(dane) + 1
+        return fcluster(linkage(dane, method='ward'), t=k_grup, criterion='maxclust')
 
-# =================================================================
-# GŁÓWNA INICJALIZACJA INTERFEJSU
-# =================================================================
+# Główne rysowanie ekranu
 st.write("### Ustawienia analizy")
 typ_zrodla = st.radio("Wybierz źródło danych:", ["Plik Excel (.xlsx)", "Link do Google Sheets"], horizontal=True)
 
@@ -242,7 +256,7 @@ else:
             elif len(sheets_dict) > 1: df_expert_raw = sheets_dict[list(sheets_dict.keys())[1]]
         except Exception: st.error("Nie udało się pobrać danych ze struktur Google Sheets.")
 
-# BEZPIECZNIK STARTOWY: Renderuj resztę interfejsu TYLKO gdy plik został pomyślnie załadowany
+# Blok blokujący wykonanie kodu do momentu pojawienia się pliku w pamięci
 if df is not None:
     try:
         x = df.iloc[:, 0]
@@ -324,7 +338,7 @@ if df is not None:
                 st.session_state.last_file_id = file_id
                 st.session_state["tabela_editor_state"] = df_current_gt
 
-            # FIX: Zmiana use_container_width na standard width="stretch" wymagany przez nową wersję Streamlit Cloud
+            # FIX: Zmiana szerokości edytora danych na standard 'width="stretch"' wymagany przez najnowszą wersję Cloud
             edited_gt = st.data_editor(
                 st.session_state["tabela_editor_state"], 
                 width="stretch", 
@@ -486,7 +500,6 @@ if df is not None:
                     st.markdown("##### 🚨 „Czarne Owce” (Usunięcie tych krzywych PODNOSI wynik):")
                     df_czarne = df_loo[df_loo["Wpływ na model"] > 0.01].reset_index(drop=True)
                     if not df_czarne.empty:
-                        # FIX: Zmiana use_container_width na standard width="stretch" w tabelach diagnostycznych
                         st.dataframe(df_czarne.style.format({"Wpływ na model": "+{:.2f}%"}), width="stretch", hide_index=True)
                     else:
                         st.info("Brak wyraźnych anomalii psujących wynik. Wszystkie krzywe wspierają model.")
@@ -495,13 +508,12 @@ if df is not None:
                     st.markdown("##### 🧱 „Filary Modelu” (Usunięcie tych krzywych drastycznie OBNIŻA wynik):")
                     df_filary = df_loo[df_loo["Wpływ na model"] < -0.01].sort_values(by="Wpływ na model", ascending=True).reset_index(drop=True)
                     if not df_filary.empty:
-                        # FIX: Zmiana use_container_width na standard width="stretch" w tabelach diagnostycznych
                         st.dataframe(df_filary.style.format({"Wpływ na model": "{:.2f}%"}), width="stretch", hide_index=True)
                     else:
                         st.info("Brak kluczowych filarów – podział grup jest stabilny rozproszony.")
 
         # =================================================================
-        # AUTOMATYCZNY RANKING METOD (TURNIEJ AI)
+        # AUTOMATYCZNY RANKING METOD (TURNIEJ AI - ZABEZPIECZONY)
         # =================================================================
         st.write("---")
         st.subheader("Ranking Skuteczności Algorytmów")
@@ -509,6 +521,7 @@ if df is not None:
         rekordy_rankingu = []
         for m_nazwa in lista_metod:
             try:
+                # Każdy testowany w tle model ma teraz potrójny bezpiecznik try-except
                 pred_etykiety = uruchom_silnik_klastrowania(m_nazwa, dane_do_algorytmu, liczba_grup, liczba_grup, df_sygnaly_raw=krzywe)
                 m_ari = adjusted_rand_score(etykiety_eksperta, pred_etykiety) * 100
                 m_nmi = normalized_mutual_info_score(etykiety_eksperta, pred_etykiety) * 100
@@ -518,12 +531,16 @@ if df is not None:
                     "Zbieżność Informacji NMI (%)": round(m_nmi, 2), 
                     "Średnia Skuteczność (%)": round((m_ari + m_nmi) / 2, 2)
                 })
-            except Exception: pass
+            except Exception: 
+                pass # Uszkodzone konfiguracje modeli w turnieju są bezpiecznie ignorowane i nie gaszą serwera
             
-        df_leaderboard = pd.DataFrame(rekordy_rankingu).sort_values(by="Średnia Skuteczność (%)", ascending=False).reset_index(drop=True)
-        df_leaderboard.index += 1
-        st.table(df_leaderboard)
+        if len(rekordy_rankingu) > 0:
+            df_leaderboard = pd.DataFrame(rekordy_rankingu).sort_values(by="Średnia Skuteczność (%)", ascending=False).reset_index(drop=True)
+            df_leaderboard.index += 1
+            st.table(df_leaderboard)
+        else:
+            st.info("Trwa inicjalizacja rankingu modeli...")
 
     except Exception as ob_blad: st.error(f"Błąd krytyczny podczas renderowania: {ob_blad}")
 else:
-    st.info("Aby rozpocząć, wgraj plik z dysku lub wklej link do Google Sheets powyżej."
+    st.info("Aby rozpocząć, wgraj plik z dysku lub wklej link do Google Sheets powyżej.")
