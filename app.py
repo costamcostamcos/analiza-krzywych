@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.cluster import KMeans, HDBSCAN, SpectralClustering
 from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
-from sklearn.decomposition import NMF
+from sklearn.decomposition import NMF, PCA
 from sklearn.metrics import silhouette_score, adjusted_rand_score, normalized_mutual_info_score
 from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
 import io
@@ -72,23 +72,22 @@ class SiecSOM:
 # =================================================================
 OPISY_METOD = {
     "K-means": "Dzieli przestrzeń cech na tzw. obszary Voronoia. Algorytm dąży do minimalizacji wariancji wewnątrzklastrowej.",
-    "SOM + Hierarchiczna (metoda Warda)": "Wykorzystuje topologiczną mapę Kohonena (SOM) do redukcji wymiarowości krzywych, a następnie buduje drzewo aglomeracyjne metodą Warda na bazie zestandaryzowanych wag neuronów.",
-    "Spectral + Hierarchiczna (metoda Warda)": "Rzutuje krzywe do nieliniowej przestrzeni spektralnej grafu pokrewieństwa, po czym aplikuje hierarchiczne grupowanie Warda, eliminując szum geometryczny.",
-    "UMAP + HDBSCAN (Hybryda Gęstościowa)": "Dwustopniowa hybryda nowej generacji. Najpierw rzutuje sygnał do przestrzeni topologicznej nieliniowej 2D (UMAP), maksymalnie zagęszczając stabilne klastry. Następnie algorytm gęstościowy (HDBSCAN) wycina z nich idealnie odizolowane grupy kształtów.",
-    "Spectral + GMM (Hybryda Spektralno-Probabilistyczna)": "Zaawansowana hybryda nieliniowa. Mapuje powiązania grafowe poprzez dekompozycję wartości własnych, a następnie dopasowuje do nich elastyczne chmury probabilistyczne rozkładu normalnego (GMM).",
+    "Hierarchiczna Aglomeracyjna (metoda Warda)": "Twój obecny faworyt (82% ARI). Buduje drzewo powiązań od dołu do góry na podstawie minimalizacji przyrostu wariancji wewnątrzklastrowej. Doskonale radzi sobie ze zwartymi grupami.",
+    "PCA + Hierarchiczna (metoda Warda)": "Hybryda redukująca szum. Wyciąga kluczowe składowe sygnału (PCA), odrzucając drobne fluktuacje laboratoryjne, a następnie aplikuje kryterium Warda.",
+    "UMAP + Hierarchiczna (metoda Warda)": "Potężna fuzja nieliniowa. UMAP makroskopowo zagęszcza i zbliża do siebie pokrewne profile krzywych w przestrzeni topologicznej, pozwalając metodzie Warda na bezbłędne wycięcie klastrów.",
+    "SOM + Hierarchiczna (metoda Warda)": "Wykorzystuje topologiczną mapę Kohonena (SOM) do kompresji krzywych, a następnie buduje drzewo aglomeracyjne metodą Warda na bazie zestandaryzowanych wag neuronów.",
+    "Spectral + Hierarchiczna (metoda Warda)": "Rzutuje krzywe do nieliniowej przestrzeni spektralnej grafu pokrewieństwa, po czym aplikuje hierarchiczne grupowanie Warda.",
+    "UMAP + HDBSCAN (Hybryda Gęstościowa)": "Dwustopniowa hybryda nowej generacji. Najpierw rzutuje sygnał do przestrzeni topologicznej nieliniowej 2D (UMAP), a algorytm gęstościowy (HDBSCAN) wycina z nich grupy kształtów.",
+    "Spectral + GMM (Hybryda Spektralno-Probabilistyczna)": "Mapuje powiązania grafowe poprzez dekompozycję wartości własnych, a następnie dopasowuje do nich elastyczne chmury probabilistyczne rozkładu normalnego (GMM).",
     "SOM + K-means (Hybryda sekwencyjna)": "Pierwszy etap wykorzystuje sieć neuronową Kohonena (SOM) do kompresji sygnału na siatkę topologiczną. Drugi etap uruchamia algorytm K-means na wagach neuronów.",
     "Klastrowanie Konsensusowe (Ensemble Voting)": "Metoda komitetowa. Uruchamia równolegle K-Means, GMM, Spectral, Ward i buduje macierz współwystępowania. Ostateczny podział jest fuzją decyzji wszystkich modeli.",
-    "PSO (Optymalizacja Rojem Cząstek)": "Metaheurystyka inspirowana naturą, imitująca zachowanie stada ptaków w wielowymiarowej przestrzeni cech.",
     "NMF (Nieujemna Faktoryzacja Macierzy)": "Rozkłada macierz danych na iloczyn dwóch macierzy o elementach wyłącznie nieujemnych.",
-    "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich. Zakłada, że struktura danych składa się z określonej liczby wielowymiarowych rozkładów normalnych.",
+    "GMM (Probabilistyczna)": "Modele Mieszanin Gaussowskich (ok. 60% ARI). Próbuje dopasować elastyczne rozkłady normalne, dając miękkie przypisanie probabilistyczne.",
     "BGMM (Bayesowski GMM)": "Rozszerzenie GMM o probabilistyczną Bayesowską z procesem Dirichleta. Automatycznie wygasza niepotrzebne klastry.",
-    "Hierarchiczna Aglomeracyjna (metoda Warda)": "Algorytm budujący drzewo powiązań od dołu do góry na podstawie minimalizacji przyrostu wariancji wewnątrzklastrowej.",
     "Hierarchiczna Korelacyjna (metoda średnich)": "Podejście hierarchiczne, które mierzy stopień współliniowości wykresów za pomocą odległości korelacyjnej (1 - r Pearsona).",
     "HDBSCAN (Gęstościowa - Auto K)": "Zaawansowane klastrowanie gęstościowe oparte na teorii grafów. Szuka obszarów o wysokiej kondensacji punktów.",
     "Spectral Clustering": "Wykorzystuje wartości własne (widmo) macierzy podobieństwa danych do redukcji wymiarowości przed właściwym podziałem.",
-    "K-Shape (Kształt fali)": "Wyspecjalizowany algorytm stworzony ściśle do analizy serii czasowych, wykorzystujący znormalizowaną korelację wzajemną.",
-    "DEC (Głębokie Uczenie - Sieć Neuronowa)": "Sztuczna sieć neuronowa (Autoenkoder) szkolona na bazie danych namnożonej przez augmentację sygnału.",
-    "ADEC (Adwersarialne Głębokie Uczenie)": "Pojedynek adwersarialny enkodera i dyskryminatora zasilany sztucznie namnożonym zbiorem danych."
+    "K-Shape (Kształt fali)": "Wyspecjalizowany algorytm stworzony ściśle do analizy serii czasowych, wykorzystujący znormalizowaną korelację wzajemną."
 }
 
 # =================================================================
@@ -127,36 +126,26 @@ def inteligentne_pobranie_tabeli(df_raw):
     df_czysty = df_czysty.dropna(subset=[df_czysty.columns[0]])
     return df_czysty
 
-def augmentuj_dane(X_oryginalne, czynniki_kopii=50, noise_level=0.02, scale_range=0.05):
-    N, F = X_oryginalne.shape
-    X_namnozone = []
-    X_namnozone.append(X_oryginalne)
-    for c in range(czynniki_kopii - 1):
-        kopia = np.copy(X_oryginalne)
-        szum = np.random.normal(0, noise_level, size=kopia.shape)
-        kopia += szum
-        skala = np.random.uniform(1.0 - scale_range, 1.0 + scale_range, size=(N, 1))
-        kopia *= skala
-        for i in range(N):
-            stary_indeks = np.arange(F)
-            nowy_indeks = stary_indeks + np.random.uniform(-0.4, 0.4, size=F)
-            nowy_indeks = np.clip(nowy_indeks, 0, F - 1)
-            kopia[i] = np.interp(stary_indeks, nowy_indeks, kopia[i])
-        X_namnozone.append(kopia)
-    return np.vstack(X_namnozone)
-
 def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3):
     if nazwa_metody == "K-means":
         return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(dane) + 1
         
+    elif "PCA + Hierarchiczna" in nazwa_metody:
+        # NOWA HYBRYDA: PCA (3 komponenty) + Ward
+        komponenty_pca = PCA(n_components=min(3, dane.shape[1]), random_state=42).fit_transform(dane)
+        return fcluster(linkage(komponenty_pca, method='ward'), t=k_grup, criterion='maxclust')
+        
+    elif "UMAP + Hierarchiczna" in nazwa_metody and umap_dostepne:
+        # NOWA HYBRYDA: UMAP (2D) + Ward
+        przestrzen_2d = umap.UMAP(n_neighbors=15, min_dist=0.05, random_state=42).fit_transform(dane)
+        return fcluster(linkage(przestrzen_2d, method='ward'), t=k_grup, criterion='maxclust')
+        
     elif "SOM + Hierarchiczna" in nazwa_metody:
-        # HYBRYDA NOWA 1: SOM + Ward
         model_som = SiecSOM(x_size=5, y_size=5, input_dim=dane.shape[1], epochs=50, random_state=42)
         cechy_som = model_som.fit_predict_features(dane)
         return fcluster(linkage(cechy_som, method='ward'), t=k_grup, criterion='maxclust')
         
     elif "Spectral + Hierarchiczna" in nazwa_metody:
-        # HYBRYDA NOWA 2: Spectral Embedding + Ward
         model_spec = SpectralClustering(n_clusters=k_grup, random_state=42, assign_labels='discretize')
         model_spec.fit(dane)
         aff_matrix = model_spec.affinity_matrix_ if hasattr(model_spec, 'affinity_matrix_') else dane
@@ -253,9 +242,12 @@ if df is not None:
         nazwy_krzywych = krzywe.columns.tolist()
         
         lista_metod = [
-            "K-means", 
+            "Hierarchiczna Aglomeracyjna (metoda Warda)",
+            "PCA + Hierarchiczna (metoda Warda)",
+            "UMAP + Hierarchiczna (metoda Warda)",
             "SOM + Hierarchiczna (metoda Warda)",
             "Spectral + Hierarchiczna (metoda Warda)",
+            "K-means", 
             "UMAP + HDBSCAN (Hybryda Gęstościowa)", 
             "Spectral + GMM (Hybryda Spektralno-Probabilistyczna)", 
             "SOM + K-means (Hybryda sekwencyjna)", 
@@ -263,7 +255,6 @@ if df is not None:
             "NMF (Nieujemna Faktoryzacja Macierzy)", 
             "GMM (Probabilistyczna)", 
             "BGMM (Bayesowski GMM)", 
-            "Hierarchiczna Aglomeracyjna (metoda Warda)", 
             "Hierarchiczna Korelacyjna (metoda średnich)", 
             "HDBSCAN (Gęstościowa - Auto K)", 
             "Spectral Clustering"
@@ -279,7 +270,7 @@ if df is not None:
 
         col_param1, col_param2, col_param3 = st.columns(3)
         with col_param1: metoda = st.selectbox("Wybierz metodę główną:", lista_metod, key="wybrana_metoda")
-        with col_param2: optymalizacja = st.selectbox("Wybierz wstępne przygotowanie danych:", lista_preprocessingow) if "K-Shape" not in metoda and "UMAP + HDBSCAN" not in metoda else "Standardowa"
+        with col_param2: optymalizacja = st.selectbox("Wybierz wstępne przygotowanie danych:", lista_preprocessingow) if "K-Shape" not in metoda and "UMAP + HDBSCAN" not in metoda and "UMAP + Hierarchiczna" not in metoda else "Standardowa"
         with col_param3: liczba_grup = st.slider("Minimalna wielkość grupy (HDBSCAN):" if "HDBSCAN" in metoda or "UMAP + HDBSCAN" in metoda else "Maksymalna liczba grup (BGMM):" if "BGMM" in metoda else "Liczba grup (K):", min_value=2, max_value=10, value=5)
 
         st.write("---")
