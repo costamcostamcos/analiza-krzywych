@@ -1,4 +1,4 @@
-import streamlit as pd
+import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
@@ -9,7 +9,7 @@ from sklearn.metrics import silhouette_score, adjusted_rand_score, normalized_mu
 from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
 import io
 import numpy as np
-import streamlit as st
+import re
 
 # Bezpieczny import dla zaawansowanego algorytmu K-Shape
 try:
@@ -53,7 +53,7 @@ OPISY_METOD = {
     "DEC (Głębokie Uczenie - Sieć Neuronowa)": "Sztuczna sieć neuronowa (Autoenkoder) szkolona na bazie danych namnożonej przez augmentację sygnału (z 44 do 2200 krzywych).",
     "ADEC (Adwersarialne Głębokie Uczenie)": "Pojedynek adwersarialny enkodera i dyskryminatora zasilany sztucznie namnożonym zbiorem danych (2200 prób). Wymusza ostre i bardzo zwarte granice między grupami, całkowicie zapobiega przeuczeniu.",
     "RDEC (Regularizowane Głębokie Uczenie)": "Model DEC wyposażony w silne bariery regularyzacyjne (L2) oraz zaawansowany moduł augmentacji sygnału. Zmusza sieć neuronową do szukania najprostszych, najbardziej powtarzalnych wzorców geometrycznych fal.",
-    "ADClust (Automatyczne Głębokie Uczenie)": "Autonomiczny kombajn AI, który sam decyduje o liczbie grup za pomocą wskaźnika Silhouette, wykonując uprzednio proces głębomkiego uczenia na 2200 wygenerowanych matematycznie wariantach."
+    "ADClust (Automatyczne Głębokie Uczenie)": "Autonomiczny kombajn AI, który sam decyduje o liczbie grup za pomocą wskaźnika Silhouette, wykonując uprzednio proces głębokiego uczenia na 2200 wygenerowanych matematycznie wariantach."
 }
 
 # =================================================================
@@ -91,6 +91,11 @@ def inteligentne_pobranie_tabeli(df_raw):
     df_czysty = df_czysty.dropna(how='all', axis=1)
     df_czysty = df_czysty.dropna(subset=[df_czysty.columns[0]])
     return df_czysty
+
+def ekstrahuj_cyfry(tekst):
+    """Pancerne wyciąganie cyfr ze zmiennej (np. 'y12' -> '12', 4.0 -> '4')"""
+    znalezione = re.findall(r'\d+', str(tekst))
+    return znalezione[0] if znalezione else str(tekst).strip().lower()
 
 def augmentuj_dane(X_oryginalne, czynniki_kopii=50, noise_level=0.02, scale_range=0.05):
     N, F = X_oryginalne.shape
@@ -186,7 +191,7 @@ if pytorch_dostepne:
             return self.model(x)
 
 # Globalna funkcja wykonawcza silnika klastrowania
-def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3):
+def运行_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3):
     if nazwa_metody == "K-means":
         return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(dane) + 1
     elif "Konsensusowe" in nazwa_metody:
@@ -248,14 +253,14 @@ typ_zrodla = st.radio("Wybierz źródło danych:", ["Plik Excel (.xlsx)", "Link 
 
 df = None
 df_expert_raw = None
-file_id = "default"  # Identyfikator służący do unieważniania cache widgetu tabeli
+file_id = "default"  
 
 if typ_zrodla == "Plik Excel (.xlsx)":
     uploaded_file = st.file_uploader("Wgraj plik Excel", type=["xlsx"])
     if uploaded_file is not None:
         df_raw = pd.read_excel(uploaded_file, sheet_name=0, header=None)
         df = inteligentne_pobranie_tabeli(df_raw)
-        file_id = f"local_{len(df_raw)}_{df_raw.iloc[0,0]}" # Generowanie unikalnego klucza pliku
+        file_id = f"local_{len(df_raw)}_{df_raw.shape[1]}" 
         
         try:
             excel_file = pd.ExcelFile(uploaded_file)
@@ -271,7 +276,7 @@ else:
         try:
             url_base = link_sheets.split("/edit")[0]
             df = inteligentne_pobranie_tabeli(pd.read_excel(f"{url_base}/export?format=xlsx", sheet_name=0, header=None))
-            file_id = f"cloud_{link_sheets[-15:]}" # Generowanie unikalnego klucza chmury
+            file_id = f"cloud_{link_sheets[-15:]}" 
             
             sheets_dict = pd.read_excel(f"{url_base}/export?format=xlsx", sheet_name=None)
             if "Ground Truth" in sheets_dict:
@@ -290,19 +295,14 @@ if df is not None:
         
         lista_metod = ["K-means", "Klastrowanie Konsensusowe (Ensemble Voting)", "PSO (Optymalizacja Rojem Cząstek)", "NMF (Nieujemna Faktoryzacja Macierzy)", "GMM (Probabilistyczna)", "BGMM (Bayesowski GMM)", "Hierarchiczna Aglomeracyjna (metoda Warda)", "Hierarchiczna Korelacyjna (metoda średnich)", "HDBSCAN (Gęstościowa - Auto K)", "Spectral Clustering"]
         if tslearn_dostepne: lista_metod.append("K-Shape (Kształt fali)")
-        if pytorch_dostepne: lista_metod.extend(["DEC (Głębokie Uczenie - Sieć Neuronowa)", "ADEC (Adwersarialne Głębokie Uczenie)", "RDEC (Regularizowane Głębokie Uczenie)", "ADClust (Automatyczne Głębokie Uczenie)"])
+        if pytorch_dostepne: lista_metod.extend(["DEC (Głębokie Uczenie - Sieć Neuronowa)", "ADEC (Adwersarialne Głębokie Uczenie)", "RDEC (Regulariseren Głębokie Uczenie)", "ADClust (Automatyczne Głębokie Uczenie)"])
 
         if 'wybrana_metoda' not in st.session_state or st.session_state.wybrana_metoda not in lista_metod:
             st.session_state.wybrana_metoda = lista_metod[0]
 
         col_param1, col_param2, col_param3 = st.columns(3)
         with col_param1: 
-            metoda = st.selectbox(
-                "Wybierz metodę główną:", 
-                lista_metod, 
-                key="wybrana_metoda", 
-                help="Wskaż algorytm uczenia maszynowego lub sieci neuronowej do podziału krzywych pomiarowych."
-            )
+            metoda = st.selectbox("Wybierz metodę główną:", lista_metod, key="wybrana_metoda")
         with col_param2: optymalizacja = st.selectbox("Wybierz wstępne przygotowanie danych:", ["Standardowa", "Analiza trendu", "FeatureExtraction", "MinMaxScaler", "Filtrowanie szumów"]) if "K-Shape" not in metoda and "DEC" not in metoda and "RDEC" not in metoda and "ADClust" not in metoda and "NMF" not in metoda else "Standardowa"
         with col_param3: liczba_grup = st.slider("Minimalna wielkość grupy (HDBSCAN):" if "HDBSCAN" in metoda else "Maksymalna liczba grup (BGMM):" if "BGMM" in metoda else "Liczba grup (K):", min_value=2, max_value=10, value=5) if "ADClust" not in metoda else 5
 
@@ -311,28 +311,30 @@ if df is not None:
         
         with col_sidebar:
             st.markdown("### Spodziewany Podział Grup")
-            st.caption("Modyfikuj przypisania w locie na ekranie:")
+            st.caption("Dane wczytane automatycznie z pliku:")
             
-            # PARSOWANIE I UNIEWAŻNIANIE REJESTRÓW CACHE SESJI DLA NOWEGO PLIKU
             cache_key = f"expert_df_{file_id}"
             if cache_key not in st.session_state:
                 if df_expert_raw is not None and len(df_expert_raw) > 0:
+                    # Czyszczenie nazw kolumn Ground Truth
                     df_expert_raw.columns = [str(c).strip() for c in df_expert_raw.columns]
                     col_k = df_expert_raw.columns[0]
                     col_g = df_expert_raw.columns[1]
                     
+                    # PANCERNY SŁOWNIK MAPOWANIA (Tylko na podstawie cyfr ekstrahowanych z nazw)
                     expert_mapping = {}
                     for _, row in df_expert_raw.iterrows():
-                        raw_key = str(row[col_k]).strip().lower()
-                        raw_val = str(row[col_g]).strip()
-                        expert_mapping[raw_key] = raw_val
-                        if raw_key.isdigit():
-                            expert_mapping[f"y{raw_key}"] = raw_val
+                        czyste_id_klucza = ekstrahuj_cyfry(row[col_k])
+                        wartosc_grupy = str(row[col_g]).strip()
+                        if czyste_id_klucza:
+                            expert_mapping[czyste_id_klucza] = wartosc_grupy
                     
+                    # Budowanie wektora etykiet końcowych
                     expert_list = []
                     for name in nazwy_krzywych:
-                        norm_name = str(name).strip().lower()
-                        expert_list.append(expert_mapping.get(norm_name, "a"))
+                        czyste_id_krzywej = ekstrahuj_cyfry(name)
+                        # Szukamy przypisania po odfiltrowanej cyfrze, domyślnie grupa "a" jeśli brak
+                        expert_list.append(expert_mapping.get(czyste_id_krzywej, "a"))
                         
                     init_df = pd.DataFrame({
                         "Krzywa": nazwy_krzywych,
@@ -343,13 +345,13 @@ if df is not None:
                 
                 st.session_state[cache_key] = init_df
             
-            # Wdrożenie dynamicznego klucza resetującego komponent
+            # Renderowanie edytowalnej tabeli z unikalnym kluczem resetującym
             edited_gt = st.data_editor(
                 st.session_state[cache_key], 
                 use_container_width=True, 
                 hide_index=True, 
                 disabled=["Krzywa"],
-                key=f"editor_{file_id}"
+                key=f"editor_widget_{file_id}"
             )
             st.session_state[cache_key] = edited_gt
             etykiety_eksperta = edited_gt["Grupa Eksperta"].astype(str).tolist()
@@ -396,8 +398,8 @@ if df is not None:
             else:
                 dane_do_algorytmu = StandardScaler().fit_transform(krzywe.T)
 
-            # POPRAWKA LITERÓWKI W NAZWIE FUNKCJI
-            numery_grup = uruchom_silnik_klastrowania(metoda, dane_do_algorytmu, liczba_grup, liczba_grup)
+            # Silnik klastrowania
+            numery_grup =运行_silnik_klastrowania(metoda, dane_do_algorytmu, liczba_grup, liczba_grup)
 
             ari_score = adjusted_rand_score(etykiety_eksperta, numery_grup) * 100
             nmi_score = normalized_mutual_info_score(etykiety_eksperta, numery_grup) * 100
@@ -405,19 +407,9 @@ if df is not None:
             st.markdown(f"### Skuteczność dopasowania do kryteriów spodziewanego podziału:")
             kpi_ari, kpi_nmi = st.columns(2)
             
-            kpi_ari.metric(
-                "Indeks ARI (Zgodność par obiektów)", 
-                f"{ari_score:.1f}%",
-                help="Adjusted Rand Index (ARI): Miara zgodności podziału dokonanego przez algorytm ze spodziewanym podziałem. Wartość jest korygowana o losowe prawdopodobieństwo trafienia. Przyjmuje wartości z przedziału [-1, 1], gdzie 1 oznacza idealną zbieżność par obiektów."
-            )
-            kpi_nmi.metric(
-                "Indeks NMI (Zbieżność informacji sygnału)", 
-                f"{nmi_score:.1f}%",
-                help="Normalized Mutual Information (NMI): Miara oparta na teorii informacji (entropii), określająca jak dużo wiedzy o podziale spodziewanym dostarcza podział wyznaczony przez model. Wynik jest normalizowany do przedziału [0, 1]."
-            )
+            kpi_ari.metric("Indeks ARI (Zgodność par)", f"{ari_score:.1f}%")
+            kpi_nmi.metric("Indeks NMI (Zbieżność informacji)", f"{nmi_score:.1f}%")
 
-            wyniki = pd.DataFrame({'Krzywa': nazwy_krzywych, 'Numer Grupy': numery_grup}).sort_values(by='Numer Grupy')
-            
             st.subheader("Wykres")
             fig, ax = plt.subplots(figsize=(10, 4.5))
             cmap = plt.get_cmap('tab10')
@@ -431,7 +423,7 @@ if df is not None:
             plt.close(fig)
 
         # =================================================================
-        # AUTOMATYCZNY RANKING METOD
+        # RANKING METOD
         # =================================================================
         st.write("---")
         st.subheader("Ranking Skuteczności Algorytmów")
@@ -439,7 +431,7 @@ if df is not None:
         rekordy_rankingu = []
         for m_nazwa in lista_metod:
             try:
-                pred_etykiety = uruchom_silnik_klastrowania(m_nazwa, dane_do_algorytmu, liczba_grup, liczba_grup)
+                pred_etykiety =运行_silnik_klastrowania(m_nazwa, dane_do_algorytmu, liczba_grup, liczba_grup)
                 m_ari = adjusted_rand_score(etykiety_eksperta, pred_etykiety) * 100
                 m_nmi = normalized_mutual_info_score(etykiety_eksperta, pred_etykiety) * 100
                 rekordy_rankingu.append({
@@ -454,54 +446,7 @@ if df is not None:
         df_leaderboard.index += 1
         st.table(df_leaderboard)
 
-        # Sekcje podpowiedzi matematycznych
-        if "HDBSCAN" not in metoda and "ADClust" not in metoda:
-            with st.expander("Zaawansowana Podpowiedź Matematyczna (Dobór liczby klastrów K)", expanded=False):
-                t_elb, t_sil, t_bic, t_gap = st.tabs(["Metoda Łokcia & Kneedle", "Silhouette Score", "Indeks BIC", "Statystyka Gap"])
-                z_k = range(2, 11)
-                iner, silh, bics = [], [], []
-                for k in z_k:
-                    km = KMeans(n_clusters=k, random_state=42, n_init=3).fit(dane_do_algorytmu)
-                    iner.append(km.inertia_)
-                    silh.append(silhouette_score(dane_do_algorytmu, km.labels_))
-                    g_t = GaussianMixture(n_components=k, covariance_type='diag', random_state=42, n_init=1).fit(dane_do_algorytmu)
-                    bics.append(g_t.bic(dane_do_algorytmu))
-                
-                with t_elb:
-                    p1, p2 = np.array([z_k[0], iner[0]]), np.array([z_k[-1], iner[-1]])
-                    k_k = z_k[np.argmax([np.abs(np.cross(p2 - p1, p1 - np.array([k, iner[i]]))) / np.linalg.norm(p2 - p1) for i, k in enumerate(z_k)])]
-                    st.info(f"Kneedle sugeruje: K = {k_k}.")
-                    fig_e, ax_e = plt.subplots(figsize=(10, 2.5))
-                    ax_e.plot(z_k, iner, 'ro-')
-                    ax_e.axvline(x=k_k, color='purple', linestyle='--')
-                    st.pyplot(fig_e); plt.close(fig_e)
-                with t_sil:
-                    fig_s, ax_s = plt.subplots(figsize=(10, 2.5))
-                    ax_s.plot(z_k, silh, 'bo-')
-                    st.pyplot(fig_s); plt.close(fig_s)
-                with t_bic:
-                    fig_b, ax_b = plt.subplots(figsize=(10, 2.5))
-                    ax_b.plot(z_k, bics, 'go-')
-                    st.pyplot(fig_b); plt.close(fig_b)
-                with t_gap:
-                    B, shape = 3, dane_do_algorytmu.shape
-                    log_Wk = np.log(iner)
-                    log_Wk_ref = np.zeros((B, len(z_k)))
-                    for b in range(B):
-                        rand_d = np.random.uniform(dane_do_algorytmu.min(axis=0), dane_do_algorytmu.max(axis=0), size=shape)
-                        for i_k, k in enumerate(z_k): log_Wk_ref[b, i_k] = np.log(KMeans(n_clusters=k, random_state=42+b, n_init=2).fit(rand_d).inertia_)
-                    gaps = np.mean(log_Wk_ref, axis=0) - log_Wk
-                    sk = np.std(log_Wk_ref, axis=0) * np.sqrt(1 + 1.0/B)
-                    ok_g = z_k[-1]
-                    for idx in range(len(z_k)-1):
-                        if gaps[idx] >= gaps[idx+1] - sk[idx+1]: ok_g = z_k[idx]; break
-                    st.info(f"Reguła Tibshiraniego sugeruje: K = {ok_g}.")
-                    fig_g, (ax_g1, ax_g2) = plt.subplots(1, 2, figsize=(11, 2.8))
-                    ax_g1.plot(z_k, np.mean(log_Wk_ref, axis=0), 'co-', label='Szum')
-                    ax_g1.plot(z_k, log_Wk, 'yo-', label='Dane')
-                    ax_g2.errorbar(z_k, gaps, yerr=sk, fmt='mo-')
-                    st.pyplot(fig_g); plt.close()
-
-    except Exception as ob_blad: st.error(f"Błąd krytyczny aplikacji: {ob_blad}")
+    except Exception as ob_blad: 
+        st.error(f"Błąd podczas renderowania: {ob_blad}")
 else:
-    st.info("Aby rozpocząć, wgraj plik z dysku lub wklej link do Google Sheets powyżej.")
+    st.info("Wgraj plik Excel lub wklej link sieciowy powyżej, aby uruchomić skrypt.")
