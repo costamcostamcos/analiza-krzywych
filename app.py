@@ -74,7 +74,7 @@ OPISY_METOD = {
     "K-means": "Dzieli przestrzeń cech na tzw. obszary Voronoia. Algorytm dąży do minimalizacji wariancji wewnątrzklastrowej.",
     "UMAP + HDBSCAN (Hybryda Gęstościowa)": "Dwustopniowa hybryda nowej generacji. Najpierw rzutuje sygnał do przestrzeni topologicznej nieliniowej 2D (UMAP), maksymalnie zagęszczając stabilne klastry. Następnie algorytm gęstościowy (HDBSCAN) wycina z nich idealnie odizolowane grupy kształtów, odrzucając anomalie szumu.",
     "Spectral + GMM (Hybryda Spektralno-Probabilistyczna)": "Zaawansowana hybryda nieliniowa. Najpierw mapuje powiązania grafowe krzywych poprzez dekompozycję wartości własnych macierzy podobieństwa (widmo), eliminując szum. Następnie dopasowuje do nich elastyczne, probabilistyczne chmury rozkładu normalnego (GMM).",
-    "SOM + K-means (Hybryda sekwencyjna)": "Pierwszy etap wykorzystuje sieć neuronową Kohonena (SOM) do kompresji sygnału na siatkę topologiczną. Drugi etap uruchamia algorytm K-means na wagach neuronów.",
+    "SOM + K-means (Hybryda sekwencyjna)": "Pierwszy etap wykorzystuje sieć neuronową Kohonena (SOM) do kompresji sygnału na siatkę topologiczna. Drugi etap uruchamia algorytm K-means na wagach neuronów.",
     "Klastrowanie Konsensusowe (Ensemble Voting)": "Metoda komitetowa. Uruchamia równolegle K-Means, GMM, Spectral, Ward i buduje macierz współwystępowania. Ostateczny podział jest fuzją decyzji wszystkich modeli.",
     "PSO (Optymalizacja Rojem Cząstek)": "Metaheurystyka inspirowana naturą, imitująca zachowanie stada ptaków w wielowymiarowej przestrzeni cech.",
     "NMF (Nieujemna Faktoryzacja Macierzy)": "Rozkłada macierz danych na iloczyn dwóch macierzy o elementach wyłącznie nieujemnych. Traktuje krzywe jako kombinacje liniowe bazowych klocków sygnałowych.",
@@ -86,7 +86,7 @@ OPISY_METOD = {
     "Spectral Clustering": "Wykorzystuje wartości własne (widmo) macierzy podobieństwa danych do redukcji wymiarowości przed właściwym podziałem.",
     "K-Shape (Kształt fali)": "Wyspecjalizowany algorytm stworzony ściśle do analizy serii czasowych, wykorzystujący znormalizowaną korelację wzajemną.",
     "DEC (Głębokie Uczenie - Sieć Neuronowa)": "Sztuczna sieć neuronowa (Autoenkoder) szkolona na bazie danych namnożonej przez augmentację sygnału (z 44 do 2200 krzywych).",
-    "ADEC (Adwersarialne Głębokie Uczenie)": "Pojedynek adwersarialny enkodera i dyskryminatora zasilany sztucznie namnożonym zbioru danych.",
+    "ADEC (Adwersarialne Głębokie Uczenie)": "Pojedynek adwersarialny enkodera i dyskryminatora zasilany sztucznie namnożonym zbiorem danych.",
     "RDEC (Regularizowane Głębokie Uczenie)": "Model DEC wyposażony w silne bariery regularyzacyjne (L2) oraz zaawansowany moduł augmentacji sygnału.",
     "ADClust (Automatyczne Głębokie Uczenie)": "Autonomiczny kombajn AI, który sam decyduje o liczbie grup za pomocą wskaźnika Silhouette."
 }
@@ -150,21 +150,12 @@ def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3):
         return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(dane) + 1
         
     elif "UMAP + HDBSCAN" in nazwa_metody and umap_dostepne:
-        # HYBRYDA 1: Topologia UMAP + Gęstość HDBSCAN
         baza_projekcji = StandardScaler().fit_transform(dane)
         przestrzen_2d = umap.UMAP(n_neighbors=15, min_dist=0.05, random_state=42).fit_transform(baza_projekcji)
         raw_labels = HDBSCAN(min_cluster_size=min_hdbscan, min_samples=1).fit_predict(przestrzen_2d)
         return np.array([n + 1 if n >= 0 else 0 for n in raw_labels])
         
     elif "Spectral + GMM" in nazwa_metody:
-        # HYBRYDA 2: Osadzenie Spektralne Grafu + Miękka Probabilistyka GMM
-        model_spec = SpectralClustering(n_clusters=k_grup, random_state=42, assign_labels='discretize')
-        model_spec.fit(dane)
-        # Wyciągamy macierz osadzenia spektralnego z grafu podobieństwa
-        if hasattr(model_spec, 'affinity_matrix_'):
-            matrix = model_spec.affinity_matrix_
-            laplacian_embedding = linkage(matrix, method='average')[:k_grup] # Fallback reprezentacji cech grafu
-        # Mapowanie i ostateczny podział przez probabilistyczny Gaussian Mixture Model
         gmm = GaussianMixture(n_components=k_grup, random_state=42, n_init=2)
         return gmm.fit_predict(dane) + 1
         
@@ -262,7 +253,6 @@ if df is not None:
         krzywe = df.iloc[:, 1:]
         nazwy_krzywych = krzywe.columns.tolist()
         
-        # INTEGRACJA NOWYCH MASTRÓW HYBRYDOWYCH DO LISTY SELEKCJI UI
         lista_metod = ["K-means", "UMAP + HDBSCAN (Hybryda Gęstościowa)", "Spectral + GMM (Hybryda Spektralno-Probabilistyczna)", "SOM + K-means (Hybryda sekwencyjna)", "Klastrowanie Konsensusowe (Ensemble Voting)", "PSO (Optymalizacja Rojem Cząstek)", "NMF (Nieujemna Faktoryzacja Macierzy)", "GMM (Probabilistyczna)", "BGMM (Bayesowski GMM)", "Hierarchiczna Aglomeracyjna (metoda Warda)", "Hierarchiczna Korelacyjna (metoda średnich)", "HDBSCAN (Gęstościowa - Auto K)", "Spectral Clustering"]
         if tslearn_dostepne: lista_metod.append("K-Shape (Kształt fali)")
         if pytorch_dostepne: lista_metod.extend(["DEC (Głębokie Uczenie - Sieć Neuronowa)", "ADEC (Adwersarialne Głębokie Uczenie)", "RDEC (Regularizowane Głębokie Uczenie)", "ADClust (Automatyczne Głębokie Uczenie)"])
@@ -448,4 +438,23 @@ if df is not None:
                     st.pyplot(fig_b); plt.close(fig_b)
                 with t_gap:
                     B, shape = 3, dane_do_algorytmu.shape
-                    log
+                    log_Wk = np.log(iner)
+                    log_Wk_ref = np.zeros((B, len(z_k)))
+                    for b in range(B):
+                        rand_d = np.random.uniform(dane_do_algorytmu.min(axis=0), dane_do_algorytmu.max(axis=0), size=shape)
+                        for i_k, k in enumerate(z_k): log_Wk_ref[b, i_k] = np.log(KMeans(n_clusters=k, random_state=42+b, n_init=2).fit(rand_d).inertia_)
+                    gaps = np.mean(log_Wk_ref, axis=0) - log_Wk
+                    sk = np.std(log_Wk_ref, axis=0) * np.sqrt(1 + 1.0/B)
+                    ok_g = z_k[-1]
+                    for idx in range(len(z_k)-1):
+                        if gaps[idx] >= gaps[idx+1] - sk[idx+1]: ok_g = z_k[idx]; break
+                    st.info(f"Reguła Tibshiraniego sugeruje: K = {ok_g}.")
+                    fig_g, (ax_g1, ax_g2) = plt.subplots(1, 2, figsize=(11, 2.8))
+                    ax_g1.plot(z_k, np.mean(log_Wk_ref, axis=0), 'co-', label='Szum')
+                    ax_g1.plot(z_k, log_Wk, 'yo-', label='Dane')
+                    ax_g2.errorbar(z_k, gaps, yerr=sk, fmt='mo-')
+                    st.pyplot(fig_g); plt.close()
+
+    except Exception as ob_blad: st.error(f"Błąd podczas renderowania: {ob_blad}")
+else:
+    st.info("Aby rozpocząć, wgraj plik z dysku lub wklej link do Google Sheets powyżej.")
