@@ -261,8 +261,18 @@ if df is not None:
         if tslearn_dostepne: lista_metod.append("K-Shape (Kształt fali)")
         if pytorch_dostepne: lista_metod.extend(["DEC (Głębokie Uczenie - Sieć Neuronowa)", "ADEC (Adwersarialne Głębokie Uczenie)", "RDEC (Regularizowane Głębokie Uczenie)", "ADClust (Automatyczne Głębokie Uczenie)"])
 
+        # FIX: Bezpieczna, jawna inicjalizacja stanu przed renderowaniem selectboxa
+        if 'wybrana_metoda' not in st.session_state or st.session_state.wybrana_metoda not in lista_metod:
+            st.session_state.wybrana_metoda = lista_metod[0]
+
         col_param1, col_param2, col_param3 = st.columns(3)
-        with col_param1: metoda = st.selectbox("Wybierz metodę główną:", lista_metod, key="wybrana_metoda", help=OPISY_METOD.get(st.session_state.wybrana_metoda, ""))
+        with col_param1: 
+            metoda = st.selectbox(
+                "Wybierz metodę główną:", 
+                lista_metod, 
+                key="wybrana_metoda", 
+                help="Wskaż algorytm uczenia maszynowego lub sieci neuronowej do podziału krzywych pomiarowych."
+            )
         with col_param2: optymalizacja = st.selectbox("Wybierz wstępne przygotowanie danych:", ["Standardowa", "Analiza trendu", "FeatureExtraction", "MinMaxScaler", "Filtrowanie szumów"]) if "K-Shape" not in metoda and "DEC" not in metoda and "RDEC" not in metoda and "ADClust" not in metoda and "NMF" not in metoda else "Standardowa"
         with col_param3: liczba_grup = st.slider("Minimalna wielkość grupy (HDBSCAN):" if "HDBSCAN" in metoda else "Maksymalna liczba grup (BGMM):" if "BGMM" in metoda else "Liczba grup (K):", min_value=2, max_value=10, value=5) if "ADClust" not in metoda else 5
 
@@ -329,7 +339,6 @@ if df is not None:
             st.markdown(f"### Skuteczność dopasowania do kryteriów spodziewanego podziału:")
             kpi_ari, kpi_nmi = st.columns(2)
             
-            # DODANIE DYMKÓW Z OPISAMI MATEMATYCZNYMI WSKAŹNIKÓW (ARGUMENT HELP)
             kpi_ari.metric(
                 "Indeks ARI (Zgodność par obiektów)", 
                 f"{ari_score:.1f}%",
@@ -338,7 +347,7 @@ if df is not None:
             kpi_nmi.metric(
                 "Indeks NMI (Zbieżność informacji sygnału)", 
                 f"{nmi_score:.1f}%",
-                help="Normalized Mutual Information (NMI): Miara oparta na teorii informacji (entropii), określająca jak dużo wiedzy o podziale spodziewanym dostarcza podział wyznaczony przez model. Wynik jest normalizowany do przedziału [0, 1] (lub 0-100%)."
+                help="Normalized Mutual Information (NMI): Miara oparta na teorii informacji (entropii), określająca jak dużo wiedzy o podziale spodziewanym dostarcza podział wyznaczony przez model. Wynik jest normalizowany do przedziału [0, 1]."
             )
 
             wyniki = pd.DataFrame({'Krzywa': nazwy_krzywych, 'Numer Grupy': numery_grup}).sort_values(by='Numer Grupy')
@@ -354,7 +363,7 @@ if df is not None:
             plt.close(fig)
 
         # =================================================================
-        # RANKING METOD
+        # AUTOMATYCZNY RANKING METOD
         # =================================================================
         st.write("---")
         st.subheader("Ranking Skuteczności Algorytmów")
