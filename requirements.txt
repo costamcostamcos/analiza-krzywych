@@ -6,3 +6,4 @@ openpyxl
 tslearn
 torch
 plotly
+umap
