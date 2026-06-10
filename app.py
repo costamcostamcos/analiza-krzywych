@@ -1145,11 +1145,120 @@ if df is not None:
 
             if rekordy:
                 df_lb = pd.DataFrame(rekordy).sort_values("Średnia (%)", ascending=False).reset_index(drop=True)
-                df_lb.index += 1
-                st.dataframe(
-                    df_lb.style.background_gradient(subset=["Średnia (%)"], cmap="Greens"),
-                    use_container_width=True, hide_index=False
+
+                # Dodaj kolumnę checkboxów — domyślnie nic niezaznaczone
+                klucz_sel = f"ranking_selekcja_{tryb_rankingu}_{liczba_grup}"
+                if klucz_sel not in st.session_state:
+                    st.session_state[klucz_sel] = [False] * len(df_lb)
+                # Wyrównaj długość jeśli lista_do_rankingu się zmieniła
+                if len(st.session_state[klucz_sel]) != len(df_lb):
+                    st.session_state[klucz_sel] = [False] * len(df_lb)
+
+                df_lb.insert(0, "Wybierz", st.session_state[klucz_sel])
+
+                st.caption("Zaznacz metody które chcesz porównać, następnie kliknij **Porównaj**.")
+
+                df_edytowalny = st.data_editor(
+                    df_lb,
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "Wybierz": st.column_config.CheckboxColumn("✔", width="small"),
+                        "Algorytm AI": st.column_config.TextColumn("Algorytm AI", disabled=True),
+                        "ARI (%)": st.column_config.NumberColumn("ARI (%)", disabled=True, format="%.2f"),
+                        "NMI (%)": st.column_config.NumberColumn("NMI (%)", disabled=True, format="%.2f"),
+                        "Silhouette (%)": st.column_config.NumberColumn("Silhouette (%)", disabled=True, format="%.2f"),
+                        "Średnia (%)": st.column_config.NumberColumn("Średnia (%)", disabled=True, format="%.2f"),
+                    },
+                    key=f"ranking_editor_{klucz_sel}"
                 )
+
+                # Zapisz stan checkboxów
+                st.session_state[klucz_sel] = df_edytowalny["Wybierz"].tolist()
+                zaznaczone = df_edytowalny[df_edytowalny["Wybierz"] == True]
+                wszystkie_zaznaczone = len(zaznaczone) == len(df_edytowalny)
+
+                col_btn1, col_btn2, col_info = st.columns([1, 1, 3])
+
+                with col_btn1:
+                    if st.button(
+                        "☑️ Odznacz wszystkie" if wszystkie_zaznaczone else "✅ Wybierz wszystkie",
+                        use_container_width=True,
+                        key="btn_wybierz_wszystkie"
+                    ):
+                        st.session_state[klucz_sel] = [not wszystkie_zaznaczone] * len(df_lb)
+                        st.rerun()
+
+                with col_btn2:
+                    porownaj = st.button(
+                        "📊 Porównaj zaznaczone",
+                        use_container_width=True,
+                        disabled=len(zaznaczone) < 2,
+                        key="btn_porownaj"
+                    )
+
+                with col_info:
+                    if len(zaznaczone) < 2:
+                        st.caption("⬅️ Zaznacz co najmniej 2 metody żeby porównać.")
+                    else:
+                        st.caption(f"Zaznaczono **{len(zaznaczone)}** metod do porównania.")
+
+                # Tabela porównawcza — pojawia się po kliknięciu Porównaj
+                if porownaj or st.session_state.get("ranking_porownanie_aktywne", False):
+                    if porownaj:
+                        st.session_state["ranking_porownanie_aktywne"] = True
+                        st.session_state["ranking_porownanie_df"] = zaznaczone.drop(columns=["Wybierz"]).reset_index(drop=True)
+
+                    df_por = st.session_state.get("ranking_porownanie_df", pd.DataFrame())
+                    if not df_por.empty:
+                        st.markdown("---")
+                        st.markdown("#### 📊 Porównanie wybranych metod")
+
+                        # Wykres radarowy / słupkowy porównawczy
+                        metryki = ["ARI (%)", "NMI (%)", "Silhouette (%)"]
+                        fig_por = go.Figure()
+                        PLOTLY_KOLORY_POR = [
+                            "#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd",
+                            "#8c564b","#e377c2","#7f7f7f","#bcbd22","#17becf"
+                        ]
+                        for idx, row_por in df_por.iterrows():
+                            fig_por.add_trace(go.Bar(
+                                name=row_por["Algorytm AI"],
+                                x=metryki,
+                                y=[row_por[m] for m in metryki],
+                                marker_color=PLOTLY_KOLORY_POR[idx % 10],
+                                text=[f"{row_por[m]:.1f}%" for m in metryki],
+                                textposition="outside",
+                            ))
+                        fig_por.update_layout(
+                            barmode="group",
+                            height=380,
+                            margin=dict(l=10, r=10, t=30, b=10),
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+                            yaxis=dict(range=[0, 115], title="Wartość (%)"),
+                            xaxis=dict(title="Metryka"),
+                        )
+                        st.plotly_chart(fig_por, use_container_width=True)
+
+                        # Tabela z podświetleniem najlepszej wartości w każdej kolumnie
+                        df_styl = df_por.set_index("Algorytm AI")
+                        def podswietl_max(s):
+                            return ["background-color: #d4edda; font-weight: bold"
+                                    if v == s.max() else "" for v in s]
+                        st.dataframe(
+                            df_styl.style
+                                .apply(podswietl_max, subset=metryki)
+                                .format({m: "{:.2f}%" for m in metryki + ["Średnia (%)"]}),
+                            use_container_width=True
+                        )
+
+                        najlepsza = df_por.loc[df_por["Średnia (%)"].idxmax(), "Algorytm AI"]
+                        st.success(f"🏆 Najlepsza metoda w porównaniu: **{najlepsza}**")
+
+                        if st.button("✖️ Zamknij porównanie", key="btn_zamknij_por"):
+                            st.session_state["ranking_porownanie_aktywne"] = False
+                            st.session_state["ranking_porownanie_df"] = pd.DataFrame()
+                            st.rerun()
             else:
                 st.info("Brak wyników — sprawdź dane wejściowe.")
 
