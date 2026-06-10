@@ -546,70 +546,33 @@ if df is not None:
 
         etykiety_eksperta = edited_gt["Grupa Eksperta"].astype(str).tolist()
 
-        # CSS: sidebar wysuwa się przy najechaniu myszką na lewy brzeg ekranu
-        hover_css = """
+        # Stylizacja natywnego sidebara — przycisk collapse jako zakładka "Grupy Wzorcowe"
+        st.markdown("""
         <style>
-        /* Chowamy domyślny przycisk collapse Streamlit sidebar */
-        [data-testid="collapsedControl"] { display: none !important; }
-
-        /* Sidebar domyślnie zwinięty — przesunięty poza ekran */
-        [data-testid="stSidebar"] {
-            transform: translateX(-100%);
-            transition: transform 0.3s ease;
-            position: fixed !important;
-            top: 0; left: 0;
-            height: 100vh;
-            z-index: 99999;
-            box-shadow: 4px 0 18px rgba(0,0,0,0.15);
+        [data-testid="collapsedControl"] {
+            background: #1f77b4 !important;
+            border-radius: 0 8px 8px 0 !important;
+            width: 34px !important;
+            height: auto !important;
+            min-height: 80px !important;
         }
-
-        /* Trigger: niewidzialna strefa 18px przy lewym brzegu */
-        body::before {
-            content: '';
-            position: fixed;
-            left: 0; top: 0;
-            width: 18px; height: 100vh;
-            z-index: 100000;
-        }
-
-        /* Hover na strefie trigger LUB na samym sidebarze = wysunięcie */
-        body:has([data-testid="stSidebar"]:hover) [data-testid="stSidebar"],
-        body:has(body::before:hover) [data-testid="stSidebar"] {
-            transform: translateX(0);
-        }
-
-        /* Zakładka ">> Grupy Wzorcowe" widoczna gdy sidebar schowany */
-        [data-testid="stSidebar"]::before {
-            content: '\\276F\\276F  Grupy Wzorcowe';
-            position: absolute;
-            right: -130px; top: 50%;
-            transform: translateY(-50%) rotate(0deg);
-            background: #1f77b4;
+        [data-testid="collapsedControl"] svg { display: none !important; }
+        [data-testid="collapsedControl"]::after {
+            content: 'Grupy Wzorcowe';
             color: white;
-            padding: 10px 14px;
-            border-radius: 0 8px 8px 0;
-            font-size: 13px;
+            font-size: 11px;
             font-weight: bold;
-            white-space: nowrap;
-            cursor: pointer;
-            box-shadow: 2px 0 8px rgba(0,0,0,0.2);
             writing-mode: vertical-rl;
             letter-spacing: 1px;
+            padding: 10px 4px;
+            display: block;
+            text-align: center;
         }
-
-        /* Ukryj zakładkę gdy sidebar otwarty */
-        body:has([data-testid="stSidebar"]:hover) [data-testid="stSidebar"]::before {
-            display: none;
-        }
-
-        /* Dostosowanie szerokości treści głównej gdy sidebar schowany */
         [data-testid="stAppViewContainer"] > [data-testid="stMain"] {
-            margin-left: 0 !important;
-            width: 100% !important;
+            transition: margin-left 0.3s ease;
         }
         </style>
-        """
-        st.markdown(hover_css, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
 
         # =================================================================
         # SUGESTIA LICZBY KLASTRÓW — Elbow, Silhouette, Davies-Bouldin, Gap
