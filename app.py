@@ -455,64 +455,101 @@ if df is not None:
         col_main, col_sidebar = st.columns([3, 1])
 
         with col_sidebar:
-            st.markdown("### Spodziewany Podział Grup")
-            st.caption("Modyfikuj przypisania w locie na ekranie:")
+            with st.expander("📋 Spodziewany Podział Grup", expanded=False):
+                st.caption("Modyfikuj przypisania w locie na ekranie:")
 
-            sztywny_podzial_eksperta = {}
-            for i in range(1, 44):
-                if i <= 17:
-                    sztywny_podzial_eksperta[f"y{i}"] = "a"
-                elif i <= 21:
-                    sztywny_podzial_eksperta[f"y{i}"] = "b"
-                elif i <= 35:
-                    sztywny_podzial_eksperta[f"y{i}"] = "c"
-                else:
-                    sztywny_podzial_eksperta[f"y{i}"] = "e"
+                sztywny_podzial_eksperta = {}
+                for i in range(1, 44):
+                    if i <= 17:
+                        sztywny_podzial_eksperta[f"y{i}"] = "a"
+                    elif i <= 21:
+                        sztywny_podzial_eksperta[f"y{i}"] = "b"
+                    elif i <= 35:
+                        sztywny_podzial_eksperta[f"y{i}"] = "c"
+                    else:
+                        sztywny_podzial_eksperta[f"y{i}"] = "e"
 
-            expert_mapping = {}
-            if df_expert_raw is not None and len(df_expert_raw) > 0:
-                try:
-                    df_expert_raw.columns = [str(c).strip().lower() for c in df_expert_raw.columns]
-                    col_k = df_expert_raw.columns[0]
-                    col_g = df_expert_raw.columns[1]
-                    for _, row in df_expert_raw.iterrows():
-                        k_str = str(row[col_k]).strip().lower()
-                        v_str = str(row[col_g]).strip()
-                        if k_str:
-                            expert_mapping[k_str] = v_str
-                except Exception:
-                    pass
+                expert_mapping = {}
+                if df_expert_raw is not None and len(df_expert_raw) > 0:
+                    try:
+                        df_expert_raw.columns = [str(c).strip().lower() for c in df_expert_raw.columns]
+                        col_k = df_expert_raw.columns[0]
+                        col_g = df_expert_raw.columns[1]
+                        for _, row in df_expert_raw.iterrows():
+                            k_str = str(row[col_k]).strip().lower()
+                            v_str = str(row[col_g]).strip()
+                            if k_str:
+                                expert_mapping[k_str] = v_str
+                    except Exception:
+                        pass
 
-            expert_list = []
-            for name in nazwy_krzywych:
-                name_clean = str(name).strip().lower()
-                name_alt = f"y{name_clean}" if not name_clean.startswith('y') and name_clean.isdigit() else name_clean
-                if name_clean in expert_mapping:
-                    expert_list.append(expert_mapping[name_clean])
-                elif name_alt in expert_mapping:
-                    expert_list.append(expert_mapping[name_alt])
-                elif name_clean in sztywny_podzial_eksperta:
-                    expert_list.append(sztywny_podzial_eksperta[name_clean])
-                elif name_alt in sztywny_podzial_eksperta:
-                    expert_list.append(sztywny_podzial_eksperta[name_alt])
-                else:
-                    expert_list.append("a")
+                expert_list = []
+                for name in nazwy_krzywych:
+                    name_clean = str(name).strip().lower()
+                    name_alt = f"y{name_clean}" if not name_clean.startswith('y') and name_clean.isdigit() else name_clean
+                    if name_clean in expert_mapping:
+                        expert_list.append(expert_mapping[name_clean])
+                    elif name_alt in expert_mapping:
+                        expert_list.append(expert_mapping[name_alt])
+                    elif name_clean in sztywny_podzial_eksperta:
+                        expert_list.append(sztywny_podzial_eksperta[name_clean])
+                    elif name_alt in sztywny_podzial_eksperta:
+                        expert_list.append(sztywny_podzial_eksperta[name_alt])
+                    else:
+                        expert_list.append("a")
 
-            df_current_gt = pd.DataFrame({"Krzywa": [str(n) for n in nazwy_krzywych], "Grupa Eksperta": expert_list})
+                df_current_gt = pd.DataFrame({"Krzywa": [str(n) for n in nazwy_krzywych], "Grupa Eksperta": expert_list})
 
-            if "last_file_id" not in st.session_state or st.session_state.last_file_id != file_id:
-                st.session_state.last_file_id = file_id
-                st.session_state["tabela_editor_state"] = df_current_gt
+                if "last_file_id" not in st.session_state or st.session_state.last_file_id != file_id:
+                    st.session_state.last_file_id = file_id
+                    st.session_state["tabela_editor_state"] = df_current_gt
 
-            edited_gt = st.data_editor(
-                st.session_state["tabela_editor_state"],
-                width="stretch",
-                hide_index=True,
-                disabled=["Krzywa"],
-                key=f"editor_instance_{file_id}"
-            )
-            st.session_state["tabela_editor_state"] = edited_gt
+                edited_gt = st.data_editor(
+                    st.session_state["tabela_editor_state"],
+                    width="stretch",
+                    hide_index=True,
+                    disabled=["Krzywa"],
+                    key=f"editor_instance_{file_id}"
+                )
+                st.session_state["tabela_editor_state"] = edited_gt
+
             etykiety_eksperta = edited_gt["Grupa Eksperta"].astype(str).tolist()
+
+            # -----------------------------------------------------------------
+            # PANEL EKSPORTU — zwijany, wypełniany po obliczeniach
+            # -----------------------------------------------------------------
+            with st.expander("💾 Pobierz skład klastrów", expanded=False):
+                if "df_eksport_klastry" in st.session_state and st.session_state["df_eksport_klastry"] is not None:
+                    df_eksport = st.session_state["df_eksport_klastry"]
+                    nazwa_metody_eks = st.session_state.get("eksport_metoda", "wynik")
+
+                    csv_bytes = df_eksport.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+                    st.download_button(
+                        label="⬇️ Pobierz CSV",
+                        data=csv_bytes,
+                        file_name=f"sklady_klastrow_{nazwa_metody_eks[:20].replace(' ', '_')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+
+                    bufor_xlsx = io.BytesIO()
+                    with pd.ExcelWriter(bufor_xlsx, engine="openpyxl") as writer:
+                        df_eksport.to_excel(writer, index=False, sheet_name="Skład Klastrów")
+                        arkusz = writer.sheets["Skład Klastrów"]
+                        arkusz.column_dimensions["A"].width = 20
+                        arkusz.column_dimensions["B"].width = 20
+                        arkusz.column_dimensions["C"].width = 18
+                        arkusz.column_dimensions["D"].width = 12
+                    bufor_xlsx.seek(0)
+                    st.download_button(
+                        label="⬇️ Pobierz Excel",
+                        data=bufor_xlsx.getvalue(),
+                        file_name=f"sklady_klastrow_{nazwa_metody_eks[:20].replace(' ', '_')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                else:
+                    st.caption("Dane pojawią się po pierwszym uruchomieniu analizy.")
 
         with col_main:
             with st.expander("Kompleksowy Opis Metodologiczny", expanded=True):
@@ -761,11 +798,7 @@ if df is not None:
                                 st.caption(f"Liczba: {len(klastry_slownik[k_id])}")
                                 st.code(", ".join(klastry_slownik[k_id]), language="text")
 
-                # =================================================================
-                # EKSPORT SKŁADU KLASTRÓW DO CSV I EXCEL
-                # =================================================================
-                st.markdown("##### 💾 Pobierz skład klastrów:")
-
+                # Zapisz dane eksportu do session_state — pobierze je panel w col_sidebar
                 wiersze_eksportu = []
                 for k_id in posortowane_klastry:
                     if k_id == 0:
@@ -781,38 +814,8 @@ if df is not None:
                             "Kolor": nazwa_koloru,
                             "Nr Klastra": k_id
                         })
-
-                df_eksport = pd.DataFrame(wiersze_eksportu)
-
-                col_exp_csv, col_exp_xlsx = st.columns(2)
-
-                with col_exp_csv:
-                    csv_bytes = df_eksport.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
-                    st.download_button(
-                        label="⬇️ Pobierz CSV",
-                        data=csv_bytes,
-                        file_name=f"sklady_klastrow_{metoda[:20].replace(' ', '_')}.csv",
-                        mime="text/csv",
-                        use_container_width=True
-                    )
-
-                with col_exp_xlsx:
-                    bufor_xlsx = io.BytesIO()
-                    with pd.ExcelWriter(bufor_xlsx, engine="openpyxl") as writer:
-                        df_eksport.to_excel(writer, index=False, sheet_name="Skład Klastrów")
-                        arkusz = writer.sheets["Skład Klastrów"]
-                        arkusz.column_dimensions["A"].width = 20
-                        arkusz.column_dimensions["B"].width = 20
-                        arkusz.column_dimensions["C"].width = 18
-                        arkusz.column_dimensions["D"].width = 12
-                    bufor_xlsx.seek(0)
-                    st.download_button(
-                        label="⬇️ Pobierz Excel",
-                        data=bufor_xlsx.getvalue(),
-                        file_name=f"sklady_klastrow_{metoda[:20].replace(' ', '_')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
+                st.session_state["df_eksport_klastry"] = pd.DataFrame(wiersze_eksportu)
+                st.session_state["eksport_metoda"] = metoda
 
                 st.write("---")
 
