@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
@@ -175,20 +176,21 @@ def augmentuj_sygnal(krzywe_df, technika, sila, n_kopii, random_state=42):
                 aug = syg + szum
 
             elif technika == "Time Warping":
-                # Odkształcenie osi czasu: losowa krzywa warpingu przez interpolację
                 t_orig = np.linspace(0, 1, n_punktow)
-                # Generuj losowe węzły warpingu
                 n_wezlow = max(4, int(n_punktow * 0.1))
                 wezly = np.sort(rng.uniform(0, 1, n_wezlow))
                 wezly = np.concatenate([[0], wezly, [1]])
-                # Zaburz węzły o sila
                 zaburzenie = rng.uniform(-sila * 0.3, sila * 0.3, len(wezly))
                 zaburzenie[0] = 0
                 zaburzenie[-1] = 0
                 t_warp = np.clip(wezly + zaburzenie, 0, 1)
-                t_warp = np.sort(t_warp)
-                t_nowe = np.interp(t_orig, t_warp, t_orig)
-                aug = np.interp(t_nowe, t_orig, syg)
+                t_warp, idx_uniq = np.unique(t_warp, return_index=True)
+                t_orig_uniq = np.linspace(0, 1, len(wezly))[idx_uniq]
+                if len(t_warp) < 2:
+                    aug = syg.copy()
+                else:
+                    t_nowe = np.interp(np.linspace(0, 1, n_punktow), t_warp, t_orig_uniq)
+                    aug = np.interp(t_nowe, np.linspace(0, 1, n_punktow), syg)
 
             elif technika == "Amplitude Scaling":
                 # Losowy współczynnik skalowania amplitudy
@@ -522,151 +524,137 @@ if df is not None:
             csv_b64 = ""
             nazwa_pliku_csv = "sklady_klastrow.csv"
 
-        drawer_html = f"""
-        <style>
-        #drawer-toggle {{
-            position: fixed;
-            left: 0;
-            top: 50%;
-            transform: translateY(-50%);
-            z-index: 9999;
-            background: #1f77b4;
-            color: white;
-            border: none;
-            border-radius: 0 8px 8px 0;
-            padding: 14px 8px;
-            cursor: pointer;
-            font-size: 18px;
-            writing-mode: vertical-rl;
-            letter-spacing: 2px;
-            box-shadow: 2px 0 8px rgba(0,0,0,0.18);
-            transition: background 0.2s;
-        }}
-        #drawer-toggle:hover {{ background: #1557a0; }}
-
-        #side-drawer {{
-            position: fixed;
-            left: -320px;
-            top: 0;
-            width: 320px;
-            height: 100vh;
-            background: #ffffff;
-            border-right: 2px solid #1f77b4;
-            box-shadow: 4px 0 18px rgba(0,0,0,0.15);
-            z-index: 9998;
-            transition: left 0.3s ease;
-            display: flex;
-            flex-direction: column;
-            padding: 0;
-            overflow: hidden;
-        }}
-        #side-drawer.open {{ left: 0; }}
-
-        #drawer-header {{
-            background: #1f77b4;
-            color: white;
-            padding: 14px 18px;
-            font-weight: bold;
-            font-size: 15px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-shrink: 0;
-        }}
-        #drawer-close {{
-            background: none;
-            border: none;
-            color: white;
-            font-size: 20px;
-            cursor: pointer;
-            line-height: 1;
-        }}
-
-        #drawer-body {{
-            flex: 1;
-            overflow-y: auto;
-            padding: 14px 16px;
-        }}
-
-        #drawer-body h4 {{
-            margin: 0 0 8px 0;
-            font-size: 13px;
-            color: #444;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }}
-
-        #gt-table {{
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 13px;
-            margin-bottom: 18px;
-        }}
-        #gt-table th {{
-            background: #f0f4fa;
-            padding: 6px 10px;
-            text-align: left;
-            border-bottom: 2px solid #1f77b4;
-            position: sticky;
-            top: 0;
-        }}
-        #gt-table td {{
-            padding: 5px 10px;
-            border-bottom: 1px solid #eee;
-        }}
-        #gt-table tr:hover td {{ background: #f5f9ff; }}
-
-        .drawer-btn {{
-            display: block;
-            width: 100%;
-            padding: 10px;
-            margin-bottom: 8px;
-            background: #1f77b4;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            font-size: 14px;
-            cursor: pointer;
-            text-align: center;
-            text-decoration: none;
-        }}
-        .drawer-btn:hover {{ background: #1557a0; }}
-        .drawer-btn.disabled {{
-            background: #aaa;
-            cursor: not-allowed;
-        }}
-        </style>
-
-        <button id="drawer-toggle" onclick="toggleDrawer()">&#x276F;&#x276F; Panel</button>
-
-        <div id="side-drawer">
-            <div id="drawer-header">
-                📋 Podział Grup &amp; Eksport
-                <button id="drawer-close" onclick="toggleDrawer()">✕</button>
-            </div>
-            <div id="drawer-body">
-                <h4>Spodziewany Podział Grup</h4>
-                <table id="gt-table">
-                    <thead><tr><th>Krzywa</th><th>Grupa</th></tr></thead>
-                    <tbody>{rows_html}</tbody>
-                </table>
-
-                <h4>Pobierz skład klastrów</h4>
-                {'<a class="drawer-btn" href="data:text/csv;base64,' + csv_b64 + '" download="' + nazwa_pliku_csv + '">⬇️ Pobierz CSV</a>' if eksport_dostepny else '<button class="drawer-btn disabled" disabled>⬇️ CSV — uruchom analizę</button>'}
-            </div>
-        </div>
-
+        drawer_html = (
+            "<div id=\"drawer-header\">"
+            "<span>\U0001f4cb Podzia\u0142 Grup &amp; Eksport</span>"
+            "<button id=\"drawer-close\">\u2715</button>"
+            "</div>"
+            "<div id=\"drawer-body\">"
+            "<h4>Spodziewany Podzia\u0142 Grup</h4>"
+            "<table id=\"gt-table\"><thead><tr><th>Krzywa</th><th>Grupa</th></tr></thead>"
+            f"<tbody>{rows_html}</tbody></table>"
+            "<h4>Pobierz sk\u0142ad klastr\u00f3w</h4>"
+            + (f'<a class="drawer-btn" href="data:text/csv;base64,{csv_b64}" download="{nazwa_pliku_csv}">\u2b07\ufe0f Pobierz CSV</a>' if eksport_dostepny else '<button class="drawer-btn disabled" disabled>\u2b07\ufe0f CSV \u2014 uruchom analiz\u0119</button>')
+            + "</div>"
+        )
+        # Wstrzykujemy CSS+HTML+JS do dokumentu nadrzędnego przez components.html
+        inject_script = f"""
         <script>
-        function toggleDrawer() {{
-            var d = document.getElementById('side-drawer');
-            var t = document.getElementById('drawer-toggle');
-            d.classList.toggle('open');
-            t.innerHTML = d.classList.contains('open') ? '&#x276E;&#x276E; Panel' : '&#x276F;&#x276F; Panel';
-        }}
+        (function() {{
+            var doc = window.parent.document;
+
+            // Usuń poprzedni panel jeśli już istnieje (hot-reload)
+            ['side-drawer','drawer-toggle','drawer-style'].forEach(function(id) {{
+                var el = doc.getElementById(id);
+                if (el) el.parentNode.removeChild(el);
+            }});
+
+            // Styl
+            var style = doc.createElement('style');
+            style.id = 'drawer-style';
+            style.textContent = `
+                #drawer-toggle {{
+                    position: fixed; left: 0; top: 50%;
+                    transform: translateY(-50%);
+                    z-index: 99999;
+                    background: #1f77b4; color: white;
+                    border: none; border-radius: 0 8px 8px 0;
+                    padding: 14px 8px; cursor: pointer;
+                    font-size: 16px; writing-mode: vertical-rl;
+                    letter-spacing: 2px;
+                    box-shadow: 2px 0 8px rgba(0,0,0,0.2);
+                    transition: background 0.2s;
+                }}
+                #drawer-toggle:hover {{ background: #1557a0; }}
+                #side-drawer {{
+                    position: fixed; left: -330px; top: 0;
+                    width: 330px; height: 100vh;
+                    background: #fff;
+                    border-right: 2px solid #1f77b4;
+                    box-shadow: 4px 0 18px rgba(0,0,0,0.15);
+                    z-index: 99998;
+                    transition: left 0.3s ease;
+                    display: flex; flex-direction: column;
+                    overflow: hidden;
+                }}
+                #side-drawer.open {{ left: 0; }}
+                #drawer-header {{
+                    background: #1f77b4; color: white;
+                    padding: 14px 18px; font-weight: bold;
+                    font-size: 15px;
+                    display: flex; justify-content: space-between; align-items: center;
+                    flex-shrink: 0;
+                }}
+                #drawer-close {{
+                    background: none; border: none; color: white;
+                    font-size: 20px; cursor: pointer;
+                }}
+                #drawer-body {{
+                    flex: 1; overflow-y: auto; padding: 14px 16px;
+                }}
+                #drawer-body h4 {{
+                    margin: 0 0 8px 0; font-size: 12px; color: #555;
+                    text-transform: uppercase; letter-spacing: 0.5px;
+                    border-bottom: 1px solid #eee; padding-bottom: 4px;
+                }}
+                #gt-table {{
+                    width: 100%; border-collapse: collapse;
+                    font-size: 13px; margin-bottom: 18px;
+                }}
+                #gt-table th {{
+                    background: #f0f4fa; padding: 6px 10px;
+                    text-align: left; border-bottom: 2px solid #1f77b4;
+                    position: sticky; top: 0;
+                }}
+                #gt-table td {{
+                    padding: 5px 10px; border-bottom: 1px solid #eee;
+                }}
+                #gt-table tr:hover td {{ background: #f5f9ff; }}
+                .drawer-btn {{
+                    display: block; width: 100%;
+                    padding: 10px; margin-bottom: 8px;
+                    background: #1f77b4; color: white;
+                    border: none; border-radius: 6px;
+                    font-size: 14px; cursor: pointer;
+                    text-align: center; text-decoration: none;
+                    box-sizing: border-box;
+                }}
+                .drawer-btn:hover {{ background: #1557a0; }}
+                .drawer-btn.disabled {{ background: #aaa; cursor: not-allowed; }}
+            `;
+            doc.head.appendChild(style);
+
+            // Panel HTML
+            var drawer = doc.createElement('div');
+            drawer.id = 'side-drawer';
+            drawer.innerHTML = `{drawer_html.replace('`', '\\`')}`;
+            doc.body.appendChild(drawer);
+
+            // Przycisk
+            var btn = doc.createElement('button');
+            btn.id = 'drawer-toggle';
+            btn.innerHTML = '&#x276F;&#x276F; Panel';
+            btn.onclick = function() {{
+                var d = doc.getElementById('side-drawer');
+                d.classList.toggle('open');
+                btn.innerHTML = d.classList.contains('open')
+                    ? '&#x276E;&#x276E; Panel'
+                    : '&#x276F;&#x276F; Panel';
+            }};
+            doc.body.appendChild(btn);
+
+            // Zamknij przyciskiem X w nagłówku
+            var closeBtn = doc.getElementById('drawer-close');
+            if (closeBtn) {{
+                closeBtn.onclick = function() {{
+                    doc.getElementById('side-drawer').classList.remove('open');
+                    btn.innerHTML = '&#x276F;&#x276F; Panel';
+                }};
+            }}
+        }})();
         </script>
         """
-
-        st.markdown(drawer_html, unsafe_allow_html=True)
+        components.html(inject_script, height=0)
 
         # Edytor tabelki w głównym obszarze (ukryty wizualnie przez CSS — dane z niego idą do session_state)
         with st.expander("📋 Edytuj Spodziewany Podział Grup", expanded=False):
@@ -1008,6 +996,63 @@ if df is not None:
                         ),
                         hide_index=True, use_container_width=True, height=320
                     )
+
+        # =================================================================
+        # SILNIK DIAGNOSTYCZNY: LEAVE-ONE-OUT (ANALIZA WPŁYWU ARI/NMI)
+        # =================================================================
+        with st.expander("🔬 Silnik Diagnostyczny Leave-One-Out (ARI / NMI)", expanded=False):
+            st.markdown(
+                "Algorytm izoluje po kolei każdą krzywą z bazy danych, uruchamia grupowanie od nowa "
+                "i bada, jak jej brak wpływa na globalny wskaźnik ARI. "
+                "**Czarne Owce** — usunięcie podnosi wynik. **Filary Modelu** — usunięcie obniża wynik."
+            )
+
+            wyniki_loo = []
+            dane_loo = StandardScaler().fit_transform(krzywe_do_wykresu.T)
+            N_samples_loo = dane_loo.shape[0]
+
+            for odrzucona_idx in range(N_samples_loo):
+                maska = np.ones(N_samples_loo, dtype=bool)
+                maska[odrzucona_idx] = False
+                dane_sub = dane_loo[maska]
+                etykiety_eksperta_sub = [etykiety_eksperta[idx] for idx in range(N_samples_loo) if maska[idx]]
+                if "Filtrowanie szumów (Rolling Mean) + Hierarchiczna" in metoda:
+                    krzywe_sub = krzywe_do_wykresu.iloc[:, maska]
+                else:
+                    krzywe_sub = krzywe_do_wykresu
+                pred_sub = uruchom_silnik_klastrowania(metoda, dane_sub, liczba_grup, liczba_grup, _df_sygnaly_raw=krzywe_sub)
+                sub_ari = adjusted_rand_score(etykiety_eksperta_sub, pred_sub) * 100
+                sub_nmi = normalized_mutual_info_score(etykiety_eksperta_sub, pred_sub) * 100
+                wyniki_loo.append({
+                    "Odrzucona Krzywa": str(nazwy_do_wykresu[odrzucona_idx]),
+                    "ARI bez krzywej (%)": round(sub_ari, 2),
+                    "NMI bez krzywej (%)": round(sub_nmi, 2),
+                    "Wpływ na ARI": round(sub_ari - ari_score, 2)
+                })
+
+            df_loo = pd.DataFrame(wyniki_loo).sort_values(by="Wpływ na ARI", ascending=False).reset_index(drop=True)
+
+            col_loo1, col_loo2 = st.columns(2)
+            with col_loo1:
+                st.markdown('##### 🚨 "Czarne Owce" (usunięcie PODNOSI ARI):')
+                df_czarne = df_loo[df_loo["Wpływ na ARI"] > 0.01].reset_index(drop=True)
+                if not df_czarne.empty:
+                    st.dataframe(
+                        df_czarne.style.format({"Wpływ na ARI": "+{:.2f}%", "ARI bez krzywej (%)": "{:.2f}%", "NMI bez krzywej (%)": "{:.2f}%"}),
+                        hide_index=True, use_container_width=True
+                    )
+                else:
+                    st.info("Brak wyraźnych anomalii. Wszystkie krzywe wspierają model.")
+            with col_loo2:
+                st.markdown('##### 🧱 "Filary Modelu" (usunięcie drastycznie OBNIŻA ARI):')
+                df_filary = df_loo[df_loo["Wpływ na ARI"] < -0.01].sort_values("Wpływ na ARI").reset_index(drop=True)
+                if not df_filary.empty:
+                    st.dataframe(
+                        df_filary.style.format({"Wpływ na ARI": "{:.2f}%", "ARI bez krzywej (%)": "{:.2f}%", "NMI bez krzywej (%)": "{:.2f}%"}),
+                        hide_index=True, use_container_width=True
+                    )
+                else:
+                    st.info("Brak kluczowych filarów — podział grup jest stabilny.")
 
         # =================================================================
         # AUTOMATYCZNY RANKING METOD — silhouette_score + ARI + NMI
