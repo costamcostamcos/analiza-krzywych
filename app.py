@@ -696,7 +696,6 @@ if df is not None:
             hide_index=True,
             disabled=["Krzywa"],
             key=f"editor_instance_{file_id}",
-            label_visibility="collapsed",
             column_config={
                 "Krzywa": st.column_config.TextColumn("Krzywa", disabled=True),
                 "Grupa Eksperta": st.column_config.TextColumn("Grupa Eksperta", max_chars=20)
