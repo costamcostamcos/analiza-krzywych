@@ -9,6 +9,7 @@ from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
 from sklearn.decomposition import NMF, PCA
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score, silhouette_score
 from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
+import io
 
 # Bezpieczne importy
 try: import umap; umap_dostepne = True
@@ -16,10 +17,11 @@ except: umap_dostepne = False
 try: from tslearn.clustering import KShape; from tslearn.utils import to_time_series_dataset; tslearn_dostepne = True
 except: tslearn_dostepne = False
 
+# Konfiguracja strony
 st.set_page_config(page_title="Analizator Krzywych Pro AI", layout="wide")
 
 # =================================================================
-# CACHOWANIE I PRZETWARZANIE
+# CACHOWANIE I PRZETWARZANIE DANYCH
 # =================================================================
 @st.cache_data
 def load_and_preprocess(file, scaler_type):
@@ -61,7 +63,7 @@ def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, df_sygnaly_raw=None)
     except: return np.ones(dane.shape[0])
 
 # =================================================================
-# INTERFEJS
+# INTERFEJS GŁÓWNY
 # =================================================================
 st.title("📊 Analizator Krzywych Pro AI")
 uploaded_file = st.file_uploader("Wgraj plik Excel", type=["xlsx"])
@@ -71,7 +73,8 @@ if uploaded_file:
     df, x, krzywe, dane = load_and_preprocess(uploaded_file, scaler_type)
     
     # Edytor GT
-    edited_gt = st.sidebar.data_editor(pd.DataFrame({"Krzywa": krzywe.columns, "Grupa": "a"}), width=None)
+    st.sidebar.markdown("### Ground Truth")
+    edited_gt = st.sidebar.data_editor(pd.DataFrame({"Krzywa": krzywe.columns, "Grupa": "a"}), use_container_width=True)
     etykiety_eksperta = edited_gt["Grupa"].tolist()
     
     lista_metod = ["Hierarchiczna (Warda)", "K-means", "Filtrowanie szumów + Hierarchiczna", "UMAP + HDBSCAN", "GMM (Probabilistyczna)"]
@@ -81,7 +84,7 @@ if uploaded_file:
     numery_grup = uruchom_silnik_klastrowania(metoda, dane, k, df_sygnaly_raw=krzywe)
     
     # WYKRES 1: Plotly (Interaktywny)
-    st.subheader("Wykres 1: Wszystkie krzywe")
+    st.subheader("Wykres 1: Wszystkie krzywe (Plotly)")
     fig = go.Figure()
     for i, col in enumerate(krzywe.columns):
         fig.add_trace(go.Scatter(x=x, y=krzywe.iloc[:, i], name=str(col), mode='lines', opacity=0.5))
@@ -98,24 +101,32 @@ if uploaded_file:
         if any(maska):
             k_dane = krzywe.iloc[:, maska]
             srednia = k_dane.mean(axis=1)
-            std = k_dane.std(axis=1)
             fig_s.add_trace(go.Scatter(x=x, y=srednia, name=f"Klaster {k_id}", line=dict(width=3)))
-            mse_vals[maska] = np.mean((dane[maska] - dane[maska].mean(axis=0))**2, axis=1)
+            # Fizyczna diagnostyka MSE względem centroidu klastra
+            dane_k = dane[maska]
+            mse_vals[maska] = np.mean((dane_k - dane_k.mean(axis=0))**2, axis=1)
+            
     st.plotly_chart(fig_s, use_container_width=True)
 
     # MSE DIAGNOSTYKA
     df['MSE'] = mse_vals
-    st.markdown("##### 🚨 Top 5 Anomalii (Najwyższe MSE):")
-    st.dataframe(df[['MSE']].sort_values('MSE', ascending=False).head(5), width=None)
+    st.markdown("##### 🚨 Top 5 Anomalii (Najwyższe MSE - najbardziej odstające od klastra):")
+    st.dataframe(df[['MSE']].sort_values('MSE', ascending=False).head(5), use_container_width=True)
 
-    # BRUTE-FORCE AI
+    # RANKING
     st.write("---")
-    st.subheader("🤖 Brute-Force AI (Turniej Silhouette)")
-    if st.button("Uruchom Brute-Force AI"):
-        bf_results = []
-        for m in lista_metod:
-            for i in range(2, 6):
-                p = uruchom_silnik_klastrowania(m, dane, i, df_sygnaly_raw=krzywe)
-                score = silhouette_score(dane, p) if len(np.unique(p)) > 1 else 0
-                bf_results.append({"Metoda": m, "K": i, "Silhouette": round(score, 4)})
-        st.table(pd.DataFrame(bf_results).sort_values("Silhouette", ascending=False))
+    st.subheader("Ranking Skuteczności Algorytmów")
+    rekordy_rankingu = []
+    for m_nazwa in lista_metod:
+        try:
+            pred_etykiety = uruchom_silnik_klastrowania(m_nazwa, dane, k, df_sygnaly_raw=krzywe)
+            m_ari = adjusted_rand_score(etykiety_eksperta, pred_etykiety) * 100
+            m_nmi = normalized_mutual_info_score(etykiety_eksperta, pred_etykiety) * 100
+            rekordy_rankingu.append({
+                "Algorytm AI": m_nazwa, 
+                "Zgodność ARI (%)": round(m_ari, 2), 
+                "Zbieżność Informacji NMI (%)": round(m_nmi, 2), 
+                "Średnia Skuteczność (%)": round((m_ari + m_nmi) / 2, 2)
+            })
+        except: pass
+    st.table(pd.DataFrame(rekordy_rankingu).sort_values("Średnia Skuteczność (%)", ascending=False))
