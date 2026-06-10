@@ -458,10 +458,11 @@ if df is not None:
                 )
 
         # =================================================================
-        # WYSUWANY PANEL Z LEWEJ KRAWĘDZI — CSS/JS przez st.markdown
+        # PANEL BOCZNY — st.sidebar z data_editor (natywny rerun przy zmianie)
+        # Hover-open przez CSS wstrzyknięty do parent document
         # =================================================================
 
-        # Buduj tabelkę eksperta
+        # Buduj dane eksperta
         sztywny_podzial_eksperta = {}
         for i in range(1, 44):
             if i <= 17:
@@ -508,185 +509,107 @@ if df is not None:
             st.session_state.last_file_id = file_id
             st.session_state["tabela_editor_state"] = df_current_gt
 
-        # Buduj edytowalną tabelkę HTML dla panelu
-        rows_html = ""
-        for _, row in st.session_state["tabela_editor_state"].iterrows():
-            rows_html += (
-                f'<tr>'
-                f'<td>{row["Krzywa"]}</td>'
-                f'<td contenteditable="true" '
-                f'onblur="zapiszGrupe(this, \'{row["Krzywa"]}\')" '
-                f'style="background:#fffbe6;cursor:text;min-width:60px">'
-                f'{row["Grupa Eksperta"]}</td>'
-                f'</tr>'
+        # Sidebar — natywny Streamlit: każda edycja automatycznie triggeruje rerun
+        with st.sidebar:
+            st.markdown("### 📋 Grupy Wzorcowe")
+            st.caption("Zmiana grupy natychmiast przelicza ARI, NMI i anomalie.")
+            edited_gt = st.data_editor(
+                st.session_state["tabela_editor_state"],
+                hide_index=True,
+                use_container_width=True,
+                disabled=["Krzywa"],
+                key=f"sidebar_editor_{file_id}",
+                column_config={
+                    "Krzywa": st.column_config.TextColumn("Krzywa", disabled=True),
+                    "Grupa Eksperta": st.column_config.TextColumn(
+                        "Grupa",
+                        help="Wpisz nazwę grupy (a, b, c...)",
+                        max_chars=20
+                    )
+                }
             )
+            st.session_state["tabela_editor_state"] = edited_gt
 
-        # Dane eksportu CSV (base64) do przycisku w panelu
-        df_eksport_panel = st.session_state.get("df_eksport_klastry", pd.DataFrame())
-        eksport_dostepny = not df_eksport_panel.empty
-        if eksport_dostepny:
-            csv_str = df_eksport_panel.to_csv(index=False, encoding="utf-8-sig")
-            csv_b64 = base64.b64encode(csv_str.encode("utf-8-sig")).decode()
-            nazwa_pliku_csv = f"sklady_klastrow_{metoda[:20].replace(' ', '_')}.csv"
-        else:
-            csv_b64 = ""
-            nazwa_pliku_csv = "sklady_klastrow.csv"
+            # Eksport CSV z panelu
+            df_eksport_panel = st.session_state.get("df_eksport_klastry", pd.DataFrame())
+            if not df_eksport_panel.empty:
+                st.markdown("---")
+                st.caption("💾 Pobierz skład klastrów:")
+                csv_bytes_sb = df_eksport_panel.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+                st.download_button(
+                    "⬇️ Pobierz CSV",
+                    data=csv_bytes_sb,
+                    file_name=f"klastry_{metoda[:15].replace(' ','_')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
 
-        drawer_html = (
-            "<div id=\"drawer-header\">"
-            "<span>\U0001f4cb Podzia\u0142 Grup &amp; Eksport</span>"
-            "<button id=\"drawer-close\">\u2715</button>"
-            "</div>"
-            "<div id=\"drawer-body\">"
-            "<h4>Spodziewany Podzia\u0142 Grup</h4>"
-            "<table id=\"gt-table\"><thead><tr><th>Krzywa</th><th>Grupa</th></tr></thead>"
-            f"<tbody>{rows_html}</tbody></table>"
-            "<h4>Pobierz sk\u0142ad klastr\u00f3w</h4>"
-            + (f'<a class="drawer-btn" href="data:text/csv;base64,{csv_b64}" download="{nazwa_pliku_csv}">\u2b07\ufe0f Pobierz CSV</a>' if eksport_dostepny else '<button class="drawer-btn disabled" disabled>\u2b07\ufe0f CSV \u2014 uruchom analiz\u0119</button>')
-            + "</div>"
-        )
-        # Wstrzykujemy CSS+HTML+JS do dokumentu nadrzędnego przez components.html
-        inject_script = f"""
-        <script>
-        (function() {{
-            var doc = window.parent.document;
+        etykiety_eksperta = edited_gt["Grupa Eksperta"].astype(str).tolist()
 
-            // Usuń poprzedni panel jeśli już istnieje (hot-reload)
-            ['side-drawer','drawer-toggle','drawer-style'].forEach(function(id) {{
-                var el = doc.getElementById(id);
-                if (el) el.parentNode.removeChild(el);
-            }});
+        # CSS: sidebar wysuwa się przy najechaniu myszką na lewy brzeg ekranu
+        hover_css = """
+        <style>
+        /* Chowamy domyślny przycisk collapse Streamlit sidebar */
+        [data-testid="collapsedControl"] { display: none !important; }
 
-            // Styl
-            var style = doc.createElement('style');
-            style.id = 'drawer-style';
-            style.textContent = `
-                #drawer-toggle {{
-                    position: fixed; left: 0; top: 50%;
-                    transform: translateY(-50%);
-                    z-index: 99999;
-                    background: #1f77b4; color: white;
-                    border: none; border-radius: 0 8px 8px 0;
-                    padding: 14px 8px; cursor: pointer;
-                    font-size: 16px; writing-mode: vertical-rl;
-                    letter-spacing: 2px;
-                    box-shadow: 2px 0 8px rgba(0,0,0,0.2);
-                    transition: background 0.2s;
-                }}
-                #drawer-toggle:hover {{ background: #1557a0; }}
-                #side-drawer {{
-                    position: fixed; left: -330px; top: 0;
-                    width: 330px; height: 100vh;
-                    background: #fff;
-                    border-right: 2px solid #1f77b4;
-                    box-shadow: 4px 0 18px rgba(0,0,0,0.15);
-                    z-index: 99998;
-                    transition: left 0.3s ease;
-                    display: flex; flex-direction: column;
-                    overflow: hidden;
-                }}
-                #side-drawer.open {{ left: 0; }}
-                #drawer-header {{
-                    background: #1f77b4; color: white;
-                    padding: 14px 18px; font-weight: bold;
-                    font-size: 15px;
-                    display: flex; justify-content: space-between; align-items: center;
-                    flex-shrink: 0;
-                }}
-                #drawer-close {{
-                    background: none; border: none; color: white;
-                    font-size: 20px; cursor: pointer;
-                }}
-                #drawer-body {{
-                    flex: 1; overflow-y: auto; padding: 14px 16px;
-                }}
-                #drawer-body h4 {{
-                    margin: 0 0 8px 0; font-size: 12px; color: #555;
-                    text-transform: uppercase; letter-spacing: 0.5px;
-                    border-bottom: 1px solid #eee; padding-bottom: 4px;
-                }}
-                #gt-table {{
-                    width: 100%; border-collapse: collapse;
-                    font-size: 13px; margin-bottom: 18px;
-                }}
-                #gt-table th {{
-                    background: #f0f4fa; padding: 6px 10px;
-                    text-align: left; border-bottom: 2px solid #1f77b4;
-                    position: sticky; top: 0;
-                }}
-                #gt-table td {{
-                    padding: 5px 10px; border-bottom: 1px solid #eee;
-                }}
-                #gt-table tr:hover td {{ background: #f5f9ff; }}
-                .drawer-btn {{
-                    display: block; width: 100%;
-                    padding: 10px; margin-bottom: 8px;
-                    background: #1f77b4; color: white;
-                    border: none; border-radius: 6px;
-                    font-size: 14px; cursor: pointer;
-                    text-align: center; text-decoration: none;
-                    box-sizing: border-box;
-                }}
-                .drawer-btn:hover {{ background: #1557a0; }}
-                .drawer-btn.disabled {{ background: #aaa; cursor: not-allowed; }}
-            `;
-            doc.head.appendChild(style);
+        /* Sidebar domyślnie zwinięty — przesunięty poza ekran */
+        [data-testid="stSidebar"] {
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+            position: fixed !important;
+            top: 0; left: 0;
+            height: 100vh;
+            z-index: 99999;
+            box-shadow: 4px 0 18px rgba(0,0,0,0.15);
+        }
 
-            // Panel HTML
-            var drawer = doc.createElement('div');
-            drawer.id = 'side-drawer';
-            drawer.innerHTML = `{drawer_html.replace('`', '\\`')}`;
-            doc.body.appendChild(drawer);
+        /* Trigger: niewidzialna strefa 18px przy lewym brzegu */
+        body::before {
+            content: '';
+            position: fixed;
+            left: 0; top: 0;
+            width: 18px; height: 100vh;
+            z-index: 100000;
+        }
 
-            // Przycisk
-            var btn = doc.createElement('button');
-            btn.id = 'drawer-toggle';
-            btn.innerHTML = '&#x276F;&#x276F; Grupy Wzorcowe';
-            btn.onclick = function() {{
-                var d = doc.getElementById('side-drawer');
-                d.classList.toggle('open');
-                btn.innerHTML = d.classList.contains('open')
-                    ? '&#x276E;&#x276E; Grupy Wzorcowe'
-                    : '&#x276F;&#x276F; Grupy Wzorcowe';
-            }};
-            doc.body.appendChild(btn);
+        /* Hover na strefie trigger LUB na samym sidebarze = wysunięcie */
+        body:has([data-testid="stSidebar"]:hover) [data-testid="stSidebar"],
+        body:has(body::before:hover) [data-testid="stSidebar"] {
+            transform: translateX(0);
+        }
 
-            // Zamknij przyciskiem X w nagłówku
-            var closeBtn = doc.getElementById('drawer-close');
-            if (closeBtn) {{
-                closeBtn.onclick = function() {{
-                    doc.getElementById('side-drawer').classList.remove('open');
-                    btn.innerHTML = '&#x276F;&#x276F; Grupy Wzorcowe';
-                }};
-            }}
+        /* Zakładka ">> Grupy Wzorcowe" widoczna gdy sidebar schowany */
+        [data-testid="stSidebar"]::before {
+            content: '\\276F\\276F  Grupy Wzorcowe';
+            position: absolute;
+            right: -130px; top: 50%;
+            transform: translateY(-50%) rotate(0deg);
+            background: #1f77b4;
+            color: white;
+            padding: 10px 14px;
+            border-radius: 0 8px 8px 0;
+            font-size: 13px;
+            font-weight: bold;
+            white-space: nowrap;
+            cursor: pointer;
+            box-shadow: 2px 0 8px rgba(0,0,0,0.2);
+            writing-mode: vertical-rl;
+            letter-spacing: 1px;
+        }
 
-            // Funkcja wywoływana przy edycji komórki grupy
-            window.zapiszGrupe = function(cell, krzywaNazwa) {{
-                var nowaGrupa = cell.innerText.trim();
-                // Wyślij zmianę do Streamlit przez ukryty input w głównym dokumencie
-                var hiddenKey = 'gt_edit__' + krzywaNazwa;
-                var existing = doc.getElementById(hiddenKey);
-                if (!existing) {{
-                    existing = doc.createElement('input');
-                    existing.type = 'hidden';
-                    existing.id = hiddenKey;
-                    doc.body.appendChild(existing);
-                }}
-                existing.value = nowaGrupa;
-                // Zaktualizuj session_state przez Streamlit componentValue
-                window.parent.postMessage({{
-                    type: 'streamlit:setComponentValue',
-                    value: JSON.stringify({{krzywa: krzywaNazwa, grupa: nowaGrupa}})
-                }}, '*');
-            }};
-        }})();
-        </script>
+        /* Ukryj zakładkę gdy sidebar otwarty */
+        body:has([data-testid="stSidebar"]:hover) [data-testid="stSidebar"]::before {
+            display: none;
+        }
+
+        /* Dostosowanie szerokości treści głównej gdy sidebar schowany */
+        [data-testid="stAppViewContainer"] > [data-testid="stMain"] {
+            margin-left: 0 !important;
+            width: 100% !important;
+        }
+        </style>
         """
-        components.html(inject_script, height=0)
-
-        # Etykiety eksperta czytane z session_state — data_editor usunięty z DOM.
-        # Edycja odbywa się wyłącznie przez panel boczny "Grupy Wzorcowe".
-        etykiety_eksperta = st.session_state["tabela_editor_state"]["Grupa Eksperta"].astype(str).tolist()
+        st.markdown(hover_css, unsafe_allow_html=True)
 
         # =================================================================
         # SUGESTIA LICZBY KLASTRÓW — Elbow, Silhouette, Davies-Bouldin, Gap
@@ -721,71 +644,69 @@ if df is not None:
             k_db = zakres_k[int(np.argmin(db_scores))]
             k_calinski = zakres_k[int(np.argmax(calinski))]
 
+            # Kneedle — normalizacja + szukanie punktu maksymalnej krzywizny
+            inercje_arr = np.array(inercje, dtype=float)
+            x_norm = (np.array(zakres_k) - zakres_k[0]) / (zakres_k[-1] - zakres_k[0])
+            y_norm = (inercje_arr - inercje_arr.min()) / (inercje_arr.max() - inercje_arr.min() + 1e-12)
+            # Odległość każdego punktu od prostej łączącej pierwszy i ostatni punkt krzywej
+            x0, y0 = x_norm[0], y_norm[0]
+            x1, y1 = x_norm[-1], y_norm[-1]
+            dx, dy = x1 - x0, y1 - y0
+            odleglosci = np.abs(dy * x_norm - dx * y_norm + x1 * y0 - y1 * x0) / (np.sqrt(dx**2 + dy**2) + 1e-12)
+            k_kneedle = zakres_k[int(np.argmax(odleglosci))]
+
             st.info(
                 f"**Sugerowane K:** "
-                f"Elbow → **{k_elbow}** | "
-                f"Silhouette → **{k_silhouette}** | "
-                f"Davies-Bouldin → **{k_db}** | "
-                f"Calinski-Harabasz → **{k_calinski}**"
+                f"Elbow (2. pochodna) \u2192 **{k_elbow}** | "
+                f"Kneedle \u2192 **{k_kneedle}** | "
+                f"Silhouette \u2192 **{k_silhouette}** | "
+                f"Davies-Bouldin \u2192 **{k_db}** | "
+                f"Calinski-Harabasz \u2192 **{k_calinski}**"
             )
 
             from plotly.subplots import make_subplots as make_sp
 
             fig_k = make_sp(
-                rows=2, cols=2,
+                rows=2, cols=3,
                 subplot_titles=[
-                    "Metoda Elbow (Inercja KMeans) — szukaj zgięcia",
-                    "Silhouette Score — im wyższy tym lepszy",
-                    "Davies-Bouldin Score — im niższy tym lepszy",
-                    "Calinski-Harabasz Score — im wyższy tym lepszy"
+                    "Elbow (Inercja) \u2014 szukaj zgi\u0119cia",
+                    "Kneedle \u2014 max odleg\u0142o\u015b\u0107 od prostej",
+                    "Silhouette \u2014 im wy\u017cszy tym lepiej",
+                    "Davies-Bouldin \u2014 im ni\u017cszy tym lepiej",
+                    "Calinski-Harabasz \u2014 im wy\u017cszy tym lepiej",
+                    ""
                 ]
             )
 
-            kolor_linia = "#1f77b4"
             kolor_marker = "#d62728"
 
-            # Elbow
-            fig_k.add_trace(go.Scatter(
-                x=zakres_k, y=inercje, mode="lines+markers",
-                line=dict(color=kolor_linia, width=2),
-                marker=dict(color=[kolor_marker if k == k_elbow else kolor_linia for k in zakres_k], size=8),
-                hovertemplate="K=%{x}<br>Inercja=%{y:.1f}<extra></extra>"
-            ), row=1, col=1)
+            def _trace(xk, yk, k_opt, kolor, row, col):
+                fig_k.add_trace(go.Scatter(
+                    x=xk, y=yk, mode="lines+markers",
+                    line=dict(color=kolor, width=2),
+                    marker=dict(
+                        color=[kolor_marker if k == k_opt else kolor for k in xk],
+                        size=[11 if k == k_opt else 7 for k in xk]
+                    ),
+                    hovertemplate="K=%{x}<br>=%{y:.4g}<extra></extra>"
+                ), row=row, col=col)
 
-            # Silhouette
-            fig_k.add_trace(go.Scatter(
-                x=zakres_k, y=silhouettes, mode="lines+markers",
-                line=dict(color="#2ca02c", width=2),
-                marker=dict(color=[kolor_marker if k == k_silhouette else "#2ca02c" for k in zakres_k], size=8),
-                hovertemplate="K=%{x}<br>Silhouette=%{y:.4f}<extra></extra>"
-            ), row=1, col=2)
-
-            # Davies-Bouldin
-            fig_k.add_trace(go.Scatter(
-                x=zakres_k, y=db_scores, mode="lines+markers",
-                line=dict(color="#ff7f0e", width=2),
-                marker=dict(color=[kolor_marker if k == k_db else "#ff7f0e" for k in zakres_k], size=8),
-                hovertemplate="K=%{x}<br>DB=%{y:.4f}<extra></extra>"
-            ), row=2, col=1)
-
-            # Calinski-Harabasz
-            fig_k.add_trace(go.Scatter(
-                x=zakres_k, y=calinski, mode="lines+markers",
-                line=dict(color="#9467bd", width=2),
-                marker=dict(color=[kolor_marker if k == k_calinski else "#9467bd" for k in zakres_k], size=8),
-                hovertemplate="K=%{x}<br>CH=%{y:.1f}<extra></extra>"
-            ), row=2, col=2)
+            _trace(zakres_k, inercje,     k_elbow,      "#1f77b4", 1, 1)
+            _trace(zakres_k, odleglosci,  k_kneedle,    "#8c564b", 1, 2)
+            _trace(zakres_k, silhouettes, k_silhouette, "#2ca02c", 1, 3)
+            _trace(zakres_k, db_scores,   k_db,         "#ff7f0e", 2, 1)
+            _trace(zakres_k, calinski,    k_calinski,   "#9467bd", 2, 2)
 
             fig_k.update_layout(
-                height=500, showlegend=False,
+                height=480, showlegend=False,
                 margin=dict(l=10, r=10, t=40, b=10),
             )
-            fig_k.update_xaxes(title_text="Liczba klastrów K", dtick=1)
+            fig_k.update_xaxes(title_text="K", dtick=1)
             st.plotly_chart(fig_k, use_container_width=True)
             st.caption(
-                "🔴 Czerwony punkt = sugerowane K dla danej metody. "
-                "Jeśli metody wskazują różne K, wybierz wartość powtarzającą się najczęściej lub tę, "
-                "która najlepiej odpowiada wiedzy dziedzinowej."
+                "\U0001f534 Czerwony punkt = sugerowane K. "
+                "Kneedle to geometryczna metoda wyznaczania 'kolana' krzywej inercji \u2014 "
+                "szuka punktu o maksymalnej odleg\u0142o\u015bci od prostej \u0142\u0105cz\u0105cej kra\u0144ce."
             )
 
         with st.expander("Kompleksowy Opis Metodologiczny", expanded=False):
