@@ -546,15 +546,18 @@ if df is not None:
 
         etykiety_eksperta = edited_gt["Grupa Eksperta"].astype(str).tolist()
 
-        # Stylizacja natywnego sidebara — przycisk collapse jako zakładka "Grupy Wzorcowe"
+        # Stylizacja natywnego sidebara + kursory i tooltip
         st.markdown("""
         <style>
+        /* --- Przycisk collapse sidebara --- */
         [data-testid="collapsedControl"] {
             background: #1f77b4 !important;
             border-radius: 0 8px 8px 0 !important;
             width: 34px !important;
             height: auto !important;
             min-height: 80px !important;
+            cursor: pointer !important;
+            position: relative !important;
         }
         [data-testid="collapsedControl"] svg { display: none !important; }
         [data-testid="collapsedControl"]::after {
@@ -568,6 +571,60 @@ if df is not None:
             display: block;
             text-align: center;
         }
+
+        /* Tooltip po najechaniu na przycisk sidebara */
+        [data-testid="collapsedControl"]::before {
+            content: '📋 Kliknij aby otworzyć panel Grup Wzorcowych';
+            position: absolute;
+            left: 42px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: #333;
+            color: #fff;
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: normal;
+            writing-mode: horizontal-tb;
+            white-space: nowrap;
+            letter-spacing: 0;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+            z-index: 999999;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+        }
+        [data-testid="collapsedControl"]:hover::before {
+            opacity: 1;
+        }
+
+        /* --- Kursor pointer na wszystkich selectboxach i dropdownach --- */
+        [data-testid="stSelectbox"] > div,
+        [data-testid="stSelectbox"] > div > div,
+        [data-testid="stSelectbox"] select,
+        div[data-baseweb="select"] > div,
+        div[data-baseweb="select"] > div > div,
+        [role="listbox"],
+        [role="option"] {
+            cursor: pointer !important;
+        }
+
+        /* Kursor pointer na suwakach */
+        [data-testid="stSlider"] input[type="range"],
+        [data-testid="stSlider"] > div > div > div {
+            cursor: pointer !important;
+        }
+
+        /* Kursor pointer na przyciskach radio */
+        [data-testid="stRadio"] label,
+        [data-testid="stRadio"] input {
+            cursor: pointer !important;
+        }
+
+        /* Ogólny kursor pointer na wszystkich elementach interaktywnych */
+        button, select, [role="button"],
+        [data-baseweb="select"] { cursor: pointer !important; }
+
         [data-testid="stAppViewContainer"] > [data-testid="stMain"] {
             transition: margin-left 0.3s ease;
         }
