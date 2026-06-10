@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.cluster import KMeans, HDBSCAN, SpectralClustering
 from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
@@ -448,60 +449,121 @@ if df is not None:
             # =================================================================
             # WYKRES 1: WSZYSTKIE KRZYWE (Z OKREŚLENIEM LEGENDY)
             # =================================================================
+            PLOTLY_KOLORY = [
+                "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+                "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"
+            ]
+
             st.subheader("Wykres 1: Wszystkie sklasterowane krzywe")
-            fig, ax = plt.subplots(figsize=(10, 4.2))
-            cmap = plt.get_cmap('tab10')
 
             if "Hierarchiczna" in metoda and "+" not in metoda:
+                # Dendrogram zostaje w matplotlib — plotly nie ma natywnego wsparcia
+                cmap = plt.get_cmap('tab10')
+                fig_dend, ax_dend = plt.subplots(figsize=(10, 4.2))
                 dendrogram(
                     linkage(dane_do_algorytmu, method='ward' if "Warda" in metoda else 'average'),
-                    labels=nazwy_krzywych, leaf_rotation=90, ax=ax
+                    labels=nazwy_krzywych, leaf_rotation=90, ax=ax_dend
                 )
+                st.pyplot(fig_dend)
+                plt.close(fig_dend)
             else:
+                fig1 = go.Figure()
                 dodane_do_legendy = set()
                 for i, col in enumerate(krzywe.columns):
-                    klaster_id = numery_grup[i]
-                    kolor_id = (klaster_id - 1) % 10 if klaster_id > 0 else -1
-                    kolor = cmap(kolor_id) if klaster_id > 0 else 'gray'
-                    etykieta = f"Klaster {klaster_id}" if klaster_id > 0 else "Szum / Odrzuty"
-                    if klaster_id not in dodane_do_legendy:
-                        ax.plot(x, krzywe[col], color=kolor, alpha=0.5, label=etykieta)
-                        dodane_do_legendy.add(klaster_id)
+                    klaster_id = int(numery_grup[i])
+                    if klaster_id > 0:
+                        kolor = PLOTLY_KOLORY[(klaster_id - 1) % 10]
+                        etykieta_grupy = f"Klaster {klaster_id}"
                     else:
-                        ax.plot(x, krzywe[col], color=kolor, alpha=0.5)
-                ax.grid(True, linestyle='--', alpha=0.5)
-                ax.legend(loc='upper right', bbox_to_anchor=(1.15, 1.0))
-
-            st.pyplot(fig)
-            plt.close(fig)
+                        kolor = "#aaaaaa"
+                        etykieta_grupy = "Szum / Odrzuty"
+                    fig1.add_trace(go.Scatter(
+                        x=x,
+                        y=krzywe[col],
+                        mode="lines",
+                        name=etykieta_grupy,
+                        legendgroup=etykieta_grupy,
+                        showlegend=(klaster_id not in dodane_do_legendy),
+                        line=dict(color=kolor, width=1.2),
+                        opacity=0.6,
+                        hovertemplate=f"<b>{col}</b><br>Klaster: {klaster_id if klaster_id > 0 else 'Szum'}<br>X: %{{x}}<br>Y: %{{y:.4f}}<extra></extra>"
+                    ))
+                    dodane_do_legendy.add(klaster_id)
+                fig1.update_layout(
+                    height=420,
+                    margin=dict(l=10, r=10, t=10, b=10),
+                    legend=dict(groupclick="toggleitem", bgcolor="rgba(255,255,255,0.8)", borderwidth=1),
+                    xaxis=dict(showgrid=True, gridcolor="#e0e0e0"),
+                    yaxis=dict(showgrid=True, gridcolor="#e0e0e0"),
+                    hovermode="closest"
+                )
+                st.plotly_chart(fig1, use_container_width=True)
 
             # =================================================================
             # WYKRES 2: PROFILE MODELOWE (ŚREDNIE + CIEŃ WARIANCJI)
             # =================================================================
             if not ("Hierarchiczna" in metoda and "+" not in metoda):
                 st.subheader("Wykres 2: Uśrednione profile modelowe (Wzorce kształtu fali)")
-                fig_srednie, ax_srednie = plt.subplots(figsize=(10, 4.2))
 
+                fig2 = go.Figure()
                 unikalne_klastry = sorted(list(set(numery_grup)))
+
                 for k_id in unikalne_klastry:
                     maska_klastra = [numery_grup[idx] == k_id for idx in range(len(numery_grup))]
                     krzywe_klastra = krzywe.iloc[:, maska_klastra]
-                    if krzywe_klastra.shape[1] > 0:
-                        profil_sredni = krzywe_klastra.mean(axis=1)
-                        profil_std = krzywe_klastra.std(axis=1).fillna(0)
-                        kolor_id = (k_id - 1) % 10 if k_id > 0 else -1
-                        kolor = cmap(kolor_id) if k_id > 0 else 'gray'
-                        label_sredni = f"Wzorzec Klastra {k_id}" if k_id > 0 else "Średnia Szumu"
-                        ax_srednie.plot(x, profil_sredni, color=kolor, linewidth=2.5, label=label_sredni)
-                        ax_srednie.fill_between(
-                            x, profil_sredni - profil_std, profil_sredni + profil_std,
-                            color=kolor, alpha=0.15
-                        )
+                    if krzywe_klastra.shape[1] == 0:
+                        continue
 
-                ax_srednie.grid(True, linestyle='--', alpha=0.5)
-                ax_srednie.legend(loc='upper right', bbox_to_anchor=(1.15, 1.0))
-                st.pyplot(fig_srednie)
-                plt.close(fig_srednie)
+                    profil_sredni = krzywe_klastra.mean(axis=1)
+                    profil_std = krzywe_klastra.std(axis=1).fillna(0)
+                    górna = profil_sredni + profil_std
+                    dolna = profil_sredni - profil_std
+
+                    if k_id > 0:
+                        kolor = PLOTLY_KOLORY[(k_id - 1) % 10]
+                        label_sredni = f"Wzorzec Klastra {k_id}"
+                        liczba_krzywych = krzywe_klastra.shape[1]
+                    else:
+                        kolor = "#aaaaaa"
+                        label_sredni = "Średnia Szumu"
+                        liczba_krzywych = krzywe_klastra.shape[1]
+
+                    # Wstęga ±1 sigma (fill_between)
+                    fig2.add_trace(go.Scatter(
+                        x=list(x) + list(x[::-1]),
+                        y=list(górna) + list(dolna[::-1]),
+                        fill="toself",
+                        fillcolor=kolor,
+                        opacity=0.12,
+                        line=dict(width=0),
+                        showlegend=False,
+                        hoverinfo="skip",
+                        legendgroup=label_sredni
+                    ))
+                    # Linia średnia
+                    fig2.add_trace(go.Scatter(
+                        x=x,
+                        y=profil_sredni,
+                        mode="lines",
+                        name=label_sredni,
+                        legendgroup=label_sredni,
+                        line=dict(color=kolor, width=2.5),
+                        hovertemplate=(
+                            f"<b>{label_sredni}</b><br>"
+                            f"Liczba krzywych: {liczba_krzywych}<br>"
+                            "X: %{x}<br>Średnia: %{y:.4f}<extra></extra>"
+                        )
+                    ))
+
+                fig2.update_layout(
+                    height=420,
+                    margin=dict(l=10, r=10, t=10, b=10),
+                    legend=dict(bgcolor="rgba(255,255,255,0.8)", borderwidth=1),
+                    xaxis=dict(showgrid=True, gridcolor="#e0e0e0"),
+                    yaxis=dict(showgrid=True, gridcolor="#e0e0e0"),
+                    hovermode="closest"
+                )
+                st.plotly_chart(fig2, use_container_width=True)
 
             # =================================================================
             # DYNAMICZNY OPIS KOLORÓW I SKŁADU KLASTRÓW POD WYKRESEM
