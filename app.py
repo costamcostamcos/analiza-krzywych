@@ -612,12 +612,17 @@ if df is not None:
             st.subheader("Wykres 1: Wszystkie sklasterowane krzywe")
 
             if "Hierarchiczna" in metoda and "+" not in metoda:
-                # Dendrogram zostaje w matplotlib — plotly nie ma natywnego wsparcia
+                # Dendrogram — liczba etykiet musi odpowiadać liczbie wierszy macierzy linkage
                 cmap = plt.get_cmap('tab10')
                 fig_dend, ax_dend = plt.subplots(figsize=(10, 4.2))
+                if optymalizacja == "Augmentacja sygnału":
+                    # dane_do_algorytmu zawiera oryginały + kopie — użyj ich nazw
+                    etykiety_dendro = list(krzywe_aug.columns)
+                else:
+                    etykiety_dendro = nazwy_do_wykresu
                 dendrogram(
                     linkage(dane_do_algorytmu, method='ward' if "Warda" in metoda else 'average'),
-                    labels=nazwy_do_wykresu, leaf_rotation=90, ax=ax_dend
+                    labels=etykiety_dendro, leaf_rotation=90, ax=ax_dend
                 )
                 st.pyplot(fig_dend)
                 plt.close(fig_dend)
