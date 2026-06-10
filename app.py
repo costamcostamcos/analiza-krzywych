@@ -546,7 +546,7 @@ if df is not None:
 
         etykiety_eksperta = edited_gt["Grupa Eksperta"].astype(str).tolist()
 
-        # Stylizacja natywnego sidebara + kursory i tooltip
+        # Stylizacja natywnego sidebara + kursory i tooltip przez JS
         st.markdown("""
         <style>
         /* --- Przycisk collapse sidebara --- */
@@ -557,7 +557,7 @@ if df is not None:
             height: auto !important;
             min-height: 80px !important;
             cursor: pointer !important;
-            position: relative !important;
+            overflow: visible !important;
         }
         [data-testid="collapsedControl"] svg { display: none !important; }
         [data-testid="collapsedControl"]::after {
@@ -572,64 +572,83 @@ if df is not None:
             text-align: center;
         }
 
-        /* Tooltip po najechaniu na przycisk sidebara */
-        [data-testid="collapsedControl"]::before {
-            content: '📋 Kliknij aby otworzyć panel Grup Wzorcowych';
-            position: absolute;
-            left: 42px;
-            top: 50%;
-            transform: translateY(-50%);
-            background: #333;
-            color: #fff;
-            padding: 6px 10px;
-            border-radius: 6px;
-            font-size: 12px;
-            font-weight: normal;
-            writing-mode: horizontal-tb;
-            white-space: nowrap;
-            letter-spacing: 0;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.2s ease;
-            z-index: 999999;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.25);
-        }
-        [data-testid="collapsedControl"]:hover::before {
-            opacity: 1;
-        }
-
-        /* --- Kursor pointer na wszystkich selectboxach i dropdownach --- */
+        /* Kursor pointer na selectboxach, sliderach, radio */
         [data-testid="stSelectbox"] > div,
-        [data-testid="stSelectbox"] > div > div,
-        [data-testid="stSelectbox"] select,
         div[data-baseweb="select"] > div,
-        div[data-baseweb="select"] > div > div,
-        [role="listbox"],
-        [role="option"] {
-            cursor: pointer !important;
-        }
-
-        /* Kursor pointer na suwakach */
         [data-testid="stSlider"] input[type="range"],
-        [data-testid="stSlider"] > div > div > div {
-            cursor: pointer !important;
-        }
-
-        /* Kursor pointer na przyciskach radio */
         [data-testid="stRadio"] label,
-        [data-testid="stRadio"] input {
-            cursor: pointer !important;
-        }
-
-        /* Ogólny kursor pointer na wszystkich elementach interaktywnych */
         button, select, [role="button"],
         [data-baseweb="select"] { cursor: pointer !important; }
 
+        /* Tooltip element tworzony przez JS */
+        #sidebar-tooltip {
+            position: fixed;
+            background: #1a1a2e;
+            color: #fff;
+            padding: 7px 12px;
+            border-radius: 7px;
+            font-size: 13px;
+            font-family: sans-serif;
+            white-space: nowrap;
+            pointer-events: none;
+            z-index: 9999999;
+            opacity: 0;
+            transition: opacity 0.18s ease;
+            box-shadow: 0 3px 12px rgba(0,0,0,0.35);
+        }
+        #sidebar-tooltip::before {
+            content: '';
+            position: absolute;
+            left: -6px; top: 50%;
+            transform: translateY(-50%);
+            border: 6px solid transparent;
+            border-right-color: #1a1a2e;
+            border-left: 0;
+        }
         [data-testid="stAppViewContainer"] > [data-testid="stMain"] {
             transition: margin-left 0.3s ease;
         }
         </style>
         """, unsafe_allow_html=True)
+
+        # JS tooltip — tworzony w window.parent, nie w sandboxowanym iframe
+        components.html("""
+        <script>
+        (function() {
+            var doc = window.parent.document;
+
+            // Usuń poprzedni tooltip jeśli istnieje
+            var old = doc.getElementById('sidebar-tooltip');
+            if (old) old.remove();
+
+            // Stwórz element tooltipa
+            var tip = doc.createElement('div');
+            tip.id = 'sidebar-tooltip';
+            tip.textContent = '📋 Otwórz panel Grupy Wzorcowe';
+            doc.body.appendChild(tip);
+
+            function showTooltip(e) {
+                var rect = e.currentTarget.getBoundingClientRect();
+                tip.style.left = (rect.right + 12) + 'px';
+                tip.style.top = (rect.top + rect.height / 2 - 16) + 'px';
+                tip.style.opacity = '1';
+            }
+            function hideTooltip() {
+                tip.style.opacity = '0';
+            }
+
+            function attachTooltip() {
+                var btn = doc.querySelector('[data-testid="collapsedControl"]');
+                if (!btn) { setTimeout(attachTooltip, 300); return; }
+                btn.removeEventListener('mouseenter', showTooltip);
+                btn.removeEventListener('mouseleave', hideTooltip);
+                btn.addEventListener('mouseenter', showTooltip);
+                btn.addEventListener('mouseleave', hideTooltip);
+            }
+            attachTooltip();
+        })();
+        </script>
+        """, height=0)
 
         # =================================================================
         # SUGESTIA LICZBY KLASTRÓW — Elbow, Silhouette, Davies-Bouldin, Gap
