@@ -104,7 +104,16 @@ OPISY_PREPROCESSING = {
     "UMAP (Redukcja topologiczna)": "Uniform Manifold Approximation and Projection. Zaawansowana, nieliniowa redukcja wymiarowości.",
     "FeatureExtraction": "Głęboka transformacja inżynierska 3D: Max, Pozycja X, Średnia, Std, Skośność, Kurtoza, harmoniczne FFT oraz wskaźniki DWT Haar.",
     "MinMaxScaler": "Dokonuje liniowej transformacji danych, przesuwając i skalując wartości każdej krzywej do przedziału od 0 do 1.",
-    "Filtrowanie szumów": "Wykorzystuje algorytm kroczącego okna średniej (rolling window). Skutecznie odcina fluktuacje wysokiej częstotliwości."
+    "Filtrowanie szumów": "Wykorzystuje algorytm kroczącego okna średniej (rolling window). Skutecznie odcina fluktuacje wysokiej częstotliwości.",
+    "Augmentacja sygnału": "Data Augmentation dla sieci neuronowych. Sztucznie rozbudowuje zbiór danych przez generowanie zaszumionych wariantów każdej krzywej. Dostępne techniki: Jitter (szum Gaussowski), Time Warping (deformacja osi czasu), Amplitude Scaling (losowe skalowanie amplitudy), Window Slicing (losowe przycięcie okna) oraz Permutation (przestawienie segmentów)."
+}
+
+OPISY_AUGMENTACJI = {
+    "Jitter": "Dodaje do każdej krzywej losowy szum Gaussowski. Symuluje szum pomiarowy — najprostsza i najszybsza technika augmentacji.",
+    "Time Warping": "Losowo rozciąga i ściska oś czasu przez interpolację na odkształconej siatce punktów. Symuluje zmienną prędkość procesu.",
+    "Amplitude Scaling": "Mnoży amplitudę każdej krzywej przez losowy współczynnik bliski 1.0. Symuluje zmienność wzmocnienia sygnału.",
+    "Window Slicing": "Wycina losowy fragment krzywej i rozciąga go z powrotem do oryginalnej długości. Uczy modelu rozpoznawania lokalnych wzorców.",
+    "Permutation": "Dzieli krzywą na segmenty i losowo je przestawia. Testuje odporność modelu na zmiany kolejności fragmentów sygnału."
 }
 
 # =================================================================
@@ -131,6 +140,88 @@ def inteligentne_pobranie_tabeli(df_raw):
     df_czysty = df_czysty.dropna(how='all', axis=1)
     df_czysty = df_czysty.dropna(subset=[df_czysty.columns[0]])
     return df_czysty
+
+
+# =================================================================
+# FUNKCJA AUGMENTACJI SYGNAŁU (DATA AUGMENTATION)
+# =================================================================
+
+def augmentuj_sygnal(krzywe_df, technika, sila, n_kopii, random_state=42):
+    """
+    Generuje n_kopii augmentowanych wariantów każdej krzywej i zwraca
+    rozszerzony DataFrame wraz z etykietami źródłowymi (nazwa oryginału).
+    sila: float 0.0–1.0 — intensywność przekształcenia
+    """
+    rng = np.random.default_rng(random_state)
+    wyniki = {}
+    etykiety_zrodlowe = {}  # nazwa_aug -> nazwa_oryginalna
+
+    # Zachowaj oryginały
+    for col in krzywe_df.columns:
+        wyniki[str(col)] = krzywe_df[col].values.copy()
+        etykiety_zrodlowe[str(col)] = str(col)
+
+    n_punktow = len(krzywe_df)
+
+    for col in krzywe_df.columns:
+        syg = krzywe_df[col].values.astype(float)
+
+        for k in range(1, n_kopii + 1):
+            nazwa_aug = f"{col}_aug{k}"
+
+            if technika == "Jitter":
+                # Szum Gaussowski skalowany siłą * std sygnału
+                szum = rng.normal(0, sila * np.std(syg), size=n_punktow)
+                aug = syg + szum
+
+            elif technika == "Time Warping":
+                # Odkształcenie osi czasu: losowa krzywa warpingu przez interpolację
+                t_orig = np.linspace(0, 1, n_punktow)
+                # Generuj losowe węzły warpingu
+                n_wezlow = max(4, int(n_punktow * 0.1))
+                wezly = np.sort(rng.uniform(0, 1, n_wezlow))
+                wezly = np.concatenate([[0], wezly, [1]])
+                # Zaburz węzły o sila
+                zaburzenie = rng.uniform(-sila * 0.3, sila * 0.3, len(wezly))
+                zaburzenie[0] = 0
+                zaburzenie[-1] = 0
+                t_warp = np.clip(wezly + zaburzenie, 0, 1)
+                t_warp = np.sort(t_warp)
+                t_nowe = np.interp(t_orig, t_warp, t_orig)
+                aug = np.interp(t_nowe, t_orig, syg)
+
+            elif technika == "Amplitude Scaling":
+                # Losowy współczynnik skalowania amplitudy
+                wspolczynnik = rng.uniform(1.0 - sila * 0.5, 1.0 + sila * 0.5)
+                aug = syg * wspolczynnik
+
+            elif technika == "Window Slicing":
+                # Wycina fragment (1-sila)..1.0 długości i rozciąga do pełnej
+                min_dlugosc = max(int(n_punktow * (1.0 - sila * 0.4)), 3)
+                dlugosc_okna = rng.integers(min_dlugosc, n_punktow)
+                start = rng.integers(0, n_punktow - dlugosc_okna + 1)
+                wycinek = syg[start: start + dlugosc_okna]
+                aug = np.interp(
+                    np.linspace(0, 1, n_punktow),
+                    np.linspace(0, 1, dlugosc_okna),
+                    wycinek
+                )
+
+            elif technika == "Permutation":
+                # Dzieli na segmenty i losowo je przestawia
+                n_segmentow = max(2, int(2 + sila * 8))
+                granice = np.array_split(np.arange(n_punktow), n_segmentow)
+                kolejnosc = rng.permutation(len(granice))
+                aug = np.concatenate([syg[granice[i]] for i in kolejnosc])
+
+            else:
+                aug = syg.copy()
+
+            wyniki[nazwa_aug] = aug
+            etykiety_zrodlowe[nazwa_aug] = str(col)
+
+    df_aug = pd.DataFrame(wyniki, index=krzywe_df.index)
+    return df_aug, etykiety_zrodlowe
 
 
 def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3, df_sygnaly_raw=None):
@@ -301,7 +392,7 @@ if df is not None:
         lista_preprocessingow = ["Standardowa", "Analiza trendu"]
         if umap_dostepne:
             lista_preprocessingow.append("UMAP (Redukcja topologiczna)")
-        lista_preprocessingow.extend(["FeatureExtraction", "MinMaxScaler", "Filtrowanie szumów"])
+        lista_preprocessingow.extend(["FeatureExtraction", "MinMaxScaler", "Filtrowanie szumów", "Augmentacja sygnału"])
 
         if 'wybrana_metoda' not in st.session_state or st.session_state.wybrana_metoda not in lista_metod:
             st.session_state.wybrana_metoda = lista_metod[0]
@@ -324,6 +415,43 @@ if df is not None:
             liczba_grup = st.slider(slider_label, min_value=2, max_value=10, value=5)
 
         st.write("---")
+
+        # -----------------------------------------------------------------
+        # PANEL AUGMENTACJI — widoczny tylko gdy wybrano tę opcję
+        # -----------------------------------------------------------------
+        aug_technika = "Jitter"
+        aug_sila = 0.1
+        aug_kopie = 2
+
+        if optymalizacja == "Augmentacja sygnału":
+            with st.expander("⚙️ Ustawienia Augmentacji Sygnału", expanded=True):
+                col_aug1, col_aug2, col_aug3 = st.columns(3)
+                with col_aug1:
+                    aug_technika = st.selectbox(
+                        "Technika augmentacji:",
+                        ["Jitter", "Time Warping", "Amplitude Scaling", "Window Slicing", "Permutation"],
+                        help="Wybierz metodę przekształcania krzywych"
+                    )
+                    st.caption(OPISY_AUGMENTACJI.get(aug_technika, ""))
+                with col_aug2:
+                    aug_sila = st.slider(
+                        "Siła augmentacji:",
+                        min_value=0.01, max_value=1.0, value=0.1, step=0.01,
+                        help="Im wyższa wartość, tym większe zniekształcenie sygnału"
+                    )
+                with col_aug3:
+                    aug_kopie = st.slider(
+                        "Liczba kopii na krzywą:",
+                        min_value=1, max_value=10, value=2,
+                        help="Ile augmentowanych wariantów wygenerować dla każdej krzywej"
+                    )
+                st.info(
+                    f"Zbiór zostanie rozszerzony z **{len(krzywe.columns)}** do "
+                    f"**{len(krzywe.columns) * (1 + aug_kopie)}** krzywych "
+                    f"({aug_kopie} kopii × {len(krzywe.columns)} oryginałów + oryginały). "
+                    f"Klasteryzacja działa na pełnym zbiorze, ARI/NMI liczone tylko dla oryginałów."
+                )
+
         col_main, col_sidebar = st.columns([3, 1])
 
         with col_sidebar:
@@ -399,7 +527,15 @@ if df is not None:
             # -----------------------------------------------------------------
             # PRZETWARZANIE DANYCH WEJŚCIOWYCH
             # -----------------------------------------------------------------
-            if optymalizacja == "Analiza trendu":
+            if optymalizacja == "Augmentacja sygnału":
+                # Generuj rozszerzony zbiór krzywych
+                krzywe_aug, etykiety_zrodlowe = augmentuj_sygnal(
+                    krzywe, aug_technika, aug_sila, aug_kopie, random_state=42
+                )
+                dane_do_algorytmu = StandardScaler().fit_transform(krzywe_aug.T)
+                # Indeksy oryginalnych krzywych w rozszerzonym zbiorze (zawsze pierwsze N)
+                indeksy_oryginalow = list(range(len(krzywe.columns)))
+            elif optymalizacja == "Analiza trendu":
                 dane_do_algorytmu = StandardScaler().fit_transform(krzywe.diff(axis=0).fillna(0).T)
             elif optymalizacja == "UMAP (Redukcja topologiczna)" and umap_dostepne:
                 baza_skalowana = StandardScaler().fit_transform(krzywe.T)
@@ -436,10 +572,29 @@ if df is not None:
             else:
                 dane_do_algorytmu = StandardScaler().fit_transform(krzywe.T)
 
-            numery_grup = uruchom_silnik_klastrowania(metoda, dane_do_algorytmu, liczba_grup, liczba_grup, df_sygnaly_raw=krzywe)
-
-            ari_score = adjusted_rand_score(etykiety_eksperta, numery_grup) * 100
-            nmi_score = normalized_mutual_info_score(etykiety_eksperta, numery_grup) * 100
+            if optymalizacja == "Augmentacja sygnału":
+                numery_grup_aug = uruchom_silnik_klastrowania(
+                    metoda, dane_do_algorytmu, liczba_grup, liczba_grup,
+                    df_sygnaly_raw=krzywe_aug
+                )
+                # Wyniki dla całego zbioru (do wykresów)
+                numery_grup = numery_grup_aug
+                nazwy_krzywych_aug = list(krzywe_aug.columns)
+                # ARI/NMI tylko dla oryginalnych N krzywych
+                numery_grup_oryg = numery_grup_aug[indeksy_oryginalow]
+                ari_score = adjusted_rand_score(etykiety_eksperta, numery_grup_oryg) * 100
+                nmi_score = normalized_mutual_info_score(etykiety_eksperta, numery_grup_oryg) * 100
+                # Do wykresów i sekcji składu klastrów użyj oryginalnych krzywych
+                krzywe_do_wykresu = krzywe
+                nazwy_do_wykresu = nazwy_krzywych
+                numery_grup_do_wykresu = numery_grup_oryg
+            else:
+                numery_grup = uruchom_silnik_klastrowania(metoda, dane_do_algorytmu, liczba_grup, liczba_grup, df_sygnaly_raw=krzywe)
+                ari_score = adjusted_rand_score(etykiety_eksperta, numery_grup) * 100
+                nmi_score = normalized_mutual_info_score(etykiety_eksperta, numery_grup) * 100
+                krzywe_do_wykresu = krzywe
+                nazwy_do_wykresu = nazwy_krzywych
+                numery_grup_do_wykresu = numery_grup
 
             st.markdown("### Skuteczność dopasowania:")
             kpi_ari, kpi_nmi = st.columns(2)
@@ -462,15 +617,15 @@ if df is not None:
                 fig_dend, ax_dend = plt.subplots(figsize=(10, 4.2))
                 dendrogram(
                     linkage(dane_do_algorytmu, method='ward' if "Warda" in metoda else 'average'),
-                    labels=nazwy_krzywych, leaf_rotation=90, ax=ax_dend
+                    labels=nazwy_do_wykresu, leaf_rotation=90, ax=ax_dend
                 )
                 st.pyplot(fig_dend)
                 plt.close(fig_dend)
             else:
                 fig1 = go.Figure()
                 dodane_do_legendy = set()
-                for i, col in enumerate(krzywe.columns):
-                    klaster_id = int(numery_grup[i])
+                for i, col in enumerate(krzywe_do_wykresu.columns):
+                    klaster_id = int(numery_grup_do_wykresu[i])
                     if klaster_id > 0:
                         kolor = PLOTLY_KOLORY[(klaster_id - 1) % 10]
                         etykieta_grupy = f"Klaster {klaster_id}"
@@ -479,7 +634,7 @@ if df is not None:
                         etykieta_grupy = "Szum / Odrzuty"
                     fig1.add_trace(go.Scatter(
                         x=x,
-                        y=krzywe[col],
+                        y=krzywe_do_wykresu[col],
                         mode="lines",
                         name=etykieta_grupy,
                         legendgroup=etykieta_grupy,
@@ -506,11 +661,11 @@ if df is not None:
                 st.subheader("Wykres 2: Uśrednione profile modelowe (Wzorce kształtu fali)")
 
                 fig2 = go.Figure()
-                unikalne_klastry = sorted(list(set(numery_grup)))
+                unikalne_klastry = sorted(list(set(numery_grup_do_wykresu)))
 
                 for k_id in unikalne_klastry:
-                    maska_klastra = [numery_grup[idx] == k_id for idx in range(len(numery_grup))]
-                    krzywe_klastra = krzywe.iloc[:, maska_klastra]
+                    maska_klastra = [numery_grup_do_wykresu[idx] == k_id for idx in range(len(numery_grup_do_wykresu))]
+                    krzywe_klastra = krzywe_do_wykresu.iloc[:, maska_klastra]
                     if krzywe_klastra.shape[1] == 0:
                         continue
 
@@ -577,8 +732,8 @@ if df is not None:
                 ]
 
                 klastry_slownik = {}
-                for i, col in enumerate(krzywe.columns):
-                    k_id = numery_grup[i]
+                for i, col in enumerate(krzywe_do_wykresu.columns):
+                    k_id = numery_grup_do_wykresu[i]
                     if k_id not in klastry_slownik:
                         klastry_slownik[k_id] = []
                     klastry_slownik[k_id].append(str(col))
@@ -663,26 +818,28 @@ if df is not None:
                 st.markdown("Algorytm izoluje po kolei każdą krzywą z bazy danych, uruchamia grupowanie od nowa i bada, jak jej brak wpływa na globalny wskaźnik ARI.")
 
                 wyniki_loo = []
-                N_samples = dane_do_algorytmu.shape[0]
+                # LOO zawsze na oryginalnych krzywych
+                dane_loo = StandardScaler().fit_transform(krzywe_do_wykresu.T)
+                N_samples_loo = dane_loo.shape[0]
 
-                for odrzucona_idx in range(N_samples):
-                    maska = np.ones(N_samples, dtype=bool)
+                for odrzucona_idx in range(N_samples_loo):
+                    maska = np.ones(N_samples_loo, dtype=bool)
                     maska[odrzucona_idx] = False
 
-                    dane_sub = dane_do_algorytmu[maska]
-                    etykiety_eksperta_sub = [etykiety_eksperta[idx] for idx in range(N_samples) if maska[idx]]
+                    dane_sub = dane_loo[maska]
+                    etykiety_eksperta_sub = [etykiety_eksperta[idx] for idx in range(N_samples_loo) if maska[idx]]
 
                     if "Filtrowanie szumów (Rolling Mean) + Hierarchiczna" in metoda:
-                        krzywe_sub = krzywe.iloc[:, maska]
+                        krzywe_sub = krzywe_do_wykresu.iloc[:, maska]
                     else:
-                        krzywe_sub = krzywe
+                        krzywe_sub = krzywe_do_wykresu
 
                     pred_sub = uruchom_silnik_klastrowania(metoda, dane_sub, liczba_grup, liczba_grup, df_sygnaly_raw=krzywe_sub)
                     sub_ari = adjusted_rand_score(etykiety_eksperta_sub, pred_sub) * 100
                     wplyw = sub_ari - ari_score
 
                     wyniki_loo.append({
-                        "Odrzucona Krzywa": str(nazwy_krzywych[odrzucona_idx]),
+                        "Odrzucona Krzywa": str(nazwy_do_wykresu[odrzucona_idx]),
                         "Nowe ARI po usunięciu (%)": round(sub_ari, 2),
                         "Wpływ na model": round(wplyw, 2)
                     })
