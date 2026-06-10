@@ -429,7 +429,7 @@ if df is not None:
         aug_kopie = 2
 
         if optymalizacja == "Augmentacja sygnału":
-            with st.expander("⚙️ Ustawienia Augmentacji Sygnału", expanded=True):
+            with st.expander("⚙️ Ustawienia Augmentacji Sygnału", expanded=False):
                 col_aug1, col_aug2, col_aug3 = st.columns(3)
                 with col_aug1:
                     aug_technika = st.selectbox(
@@ -684,25 +684,9 @@ if df is not None:
         """
         components.html(inject_script, height=0)
 
-        # data_editor ukryty wizualnie — dostarcza etykiety_eksperta do obliczeń.
-        # Panel boczny "Grupy Wzorcowe" przejął rolę edycji wizualnej.
-        st.markdown(
-            "<style>[data-testid='stDataEditor'] { display: none !important; }</style>",
-            unsafe_allow_html=True
-        )
-        edited_gt = st.data_editor(
-            st.session_state["tabela_editor_state"],
-            width="stretch",
-            hide_index=True,
-            disabled=["Krzywa"],
-            key=f"editor_instance_{file_id}",
-            column_config={
-                "Krzywa": st.column_config.TextColumn("Krzywa", disabled=True),
-                "Grupa Eksperta": st.column_config.TextColumn("Grupa Eksperta", max_chars=20)
-            }
-        )
-        st.session_state["tabela_editor_state"] = edited_gt
-        etykiety_eksperta = edited_gt["Grupa Eksperta"].astype(str).tolist()
+        # Etykiety eksperta czytane z session_state — data_editor usunięty z DOM.
+        # Edycja odbywa się wyłącznie przez panel boczny "Grupy Wzorcowe".
+        etykiety_eksperta = st.session_state["tabela_editor_state"]["Grupa Eksperta"].astype(str).tolist()
 
         # =================================================================
         # SUGESTIA LICZBY KLASTRÓW — Elbow, Silhouette, Davies-Bouldin, Gap
@@ -804,7 +788,7 @@ if df is not None:
                 "która najlepiej odpowiada wiedzy dziedzinowej."
             )
 
-        with st.expander("Kompleksowy Opis Metodologiczny", expanded=True):
+        with st.expander("Kompleksowy Opis Metodologiczny", expanded=False):
                 c_d1, c_d2 = st.columns(2)
                 with c_d1:
                     st.markdown(f"#### Algorytm Główny: `{metoda}`")
@@ -1100,7 +1084,7 @@ if df is not None:
         # =================================================================
         # MSE ANOMALY DETECTION — odległość krzywej od centroidu klastra
         # =================================================================
-        with st.expander("🔍 Detekcja Anomalii MSE: Odległość od centroidu klastra", expanded=True):
+        with st.expander("🔍 Detekcja Anomalii MSE: Odległość od centroidu klastra", expanded=False):
             st.markdown(
                 "Dla każdej krzywej obliczana jest **fizyczna odległość MSE** od wzorca (centroidu) "
                 "jej klastra. Krzywe z MSE powyżej progu `μ + 2σ` są automatycznie oznaczane jako anomalie."
@@ -1218,48 +1202,72 @@ if df is not None:
         # AUTOMATYCZNY RANKING METOD — silhouette_score + ARI + NMI
         # =================================================================
         with st.expander("🏆 Ranking Skuteczności Algorytmów", expanded=False):
+            st.markdown(
+                "Ranking uruchamia wszystkie metody klasteryzacji na tych samych danych i porównuje "
+                "ARI, NMI oraz Silhouette Score. Wyniki są cachowane — ponowne otwarcie jest natychmiastowe."
+            )
 
-            @st.cache_data(show_spinner=False)
-            def oblicz_ranking(_dane, _etykiety_eksperta, _krzywe, lista_metod, liczba_grup, _metoda_glowna):
-                """Cached: przelicza się tylko gdy zmienią się dane wejściowe lub parametry."""
+            # Szybkie metody (bez UMAP, SOM, Konsensus, K-Shape) — dostępne od razu
+            METODY_SZYBKIE = [
+                "Hierarchiczna Aglomeracyjna (metoda Warda)",
+                "PCA + Hierarchiczna (metoda Warda)",
+                "K-means",
+                "GMM (Probabilistyczna)",
+                "Hierarchiczna Korelacyjna (metoda średnich)",
+                "Spectral Clustering",
+                "NMF (Nieujemna Faktoryzacja Macierzy)",
+                "BGMM (Bayesowski GMM)",
+            ]
+            METODY_PELNE = lista_metod
+
+            tryb_rankingu = st.radio(
+                "Zakres rankingu:",
+                ["⚡ Szybki (8 metod)", "🔬 Pełny (wszystkie metody)"],
+                horizontal=True,
+                key="tryb_rankingu"
+            )
+            lista_do_rankingu = METODY_SZYBKIE if "Szybki" in tryb_rankingu else METODY_PELNE
+
+            @st.cache_data(show_spinner="Obliczam ranking...")
+            def oblicz_ranking(_dane, _etykiety, _krzywe, metody_tuple, k):
                 rekordy = []
-                for m_nazwa in lista_metod:
+                for m_nazwa in metody_tuple:
                     try:
-                        pred = uruchom_silnik_klastrowania(m_nazwa, _dane, liczba_grup, liczba_grup, _df_sygnaly_raw=_krzywe)
+                        pred = uruchom_silnik_klastrowania(m_nazwa, _dane, k, k, _df_sygnaly_raw=_krzywe)
                         unikalne = np.unique(pred[pred > 0]) if 0 in pred else np.unique(pred)
                         if len(unikalne) < 2:
-                            raise ValueError("Za mało klastrów do silhouette")
-                        m_ari = adjusted_rand_score(_etykiety_eksperta, pred) * 100
-                        m_nmi = normalized_mutual_info_score(_etykiety_eksperta, pred) * 100
-                        maska_nie_szum = pred > 0
-                        if maska_nie_szum.sum() >= 2 and len(np.unique(pred[maska_nie_szum])) >= 2:
-                            m_sil = silhouette_score(_dane[maska_nie_szum], pred[maska_nie_szum]) * 100
-                        else:
-                            m_sil = silhouette_score(_dane, pred) * 100
+                            continue
+                        m_ari = adjusted_rand_score(_etykiety, pred) * 100
+                        m_nmi = normalized_mutual_info_score(_etykiety, pred) * 100
+                        maska_ns = pred > 0
+                        dane_sil = _dane[maska_ns] if maska_ns.sum() >= 2 and len(np.unique(pred[maska_ns])) >= 2 else _dane
+                        pred_sil = pred[maska_ns] if maska_ns.sum() >= 2 and len(np.unique(pred[maska_ns])) >= 2 else pred
+                        m_sil = silhouette_score(dane_sil, pred_sil) * 100
                         rekordy.append({
                             "Algorytm AI": m_nazwa,
                             "ARI (%)": round(m_ari, 2),
                             "NMI (%)": round(m_nmi, 2),
                             "Silhouette (%)": round(m_sil, 2),
-                            "Średnia (ARI+NMI+Sil) (%)": round((m_ari + m_nmi + m_sil) / 3, 2)
+                            "Średnia (%)": round((m_ari + m_nmi + m_sil) / 3, 2)
                         })
                     except Exception:
                         pass
                 return rekordy
 
-            rekordy_rankingu = oblicz_ranking(
-                dane_do_algorytmu, etykiety_eksperta, krzywe,
-                lista_metod, liczba_grup, metoda
+            rekordy = oblicz_ranking(
+                dane_do_algorytmu, tuple(etykiety_eksperta), krzywe,
+                tuple(lista_do_rankingu), liczba_grup
             )
 
-            if len(rekordy_rankingu) > 0:
-                df_leaderboard = pd.DataFrame(rekordy_rankingu).sort_values(
-                    by="Średnia (ARI+NMI+Sil) (%)", ascending=False
-                ).reset_index(drop=True)
-                df_leaderboard.index += 1
-                st.table(df_leaderboard)
+            if rekordy:
+                df_lb = pd.DataFrame(rekordy).sort_values("Średnia (%)", ascending=False).reset_index(drop=True)
+                df_lb.index += 1
+                st.dataframe(
+                    df_lb.style.background_gradient(subset=["Średnia (%)"], cmap="Greens"),
+                    use_container_width=True, hide_index=False
+                )
             else:
-                st.info("Trwa inicjalizacja rankingu modeli...")
+                st.info("Brak wyników — sprawdź dane wejściowe.")
 
     except Exception as ob_blad:
         st.error(f"Błąd krytyczny podczas renderowania: {ob_blad}")
