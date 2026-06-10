@@ -37,13 +37,14 @@ except ImportError:
 
 # Konfiguracja strony - wymuszenie pełnej szerokości ekranu komputera
 st.set_page_config(
-    page_title="Analizator Krzywych Pro AI", 
+    page_title="Analizator Krzywych Pro AI",
     layout="wide"
 )
 
 # =================================================================
 # IMPLEMENTACJA SIECI NEURONOWEJ SOM (SELF-ORGANIZING MAP)
 # =================================================================
+
 class SiecSOM:
     def __init__(self, x_size=5, y_size=5, input_dim=43, lr=0.5, epochs=100, random_state=42):
         self.x_size = x_size
@@ -70,6 +71,7 @@ class SiecSOM:
 # =================================================================
 # SŁOWNIK INTELIGENTNYCH OPISÓW METOD KLASTERYZACJI
 # =================================================================
+
 OPISY_METOD = {
     "Hierarchiczna Aglomeracyjna (metoda Warda)": "Buduje drzewo powiązań od dołu do góry na podstawie minimalizacji przyrostu wariancji wewnątrzklastrowej. Doskonale radzi sobie ze zwartymi grupami.",
     "Filtrowanie szumów (Rolling Mean) + Hierarchiczna (metoda Warda)": "Liniowa transformacja wygładzająca. Algorytm najpierw aplikuje okno kroczącej średniej (rolling mean), usuwając szum pomiarowy wysokiej częstotliwości z serii czasowej, a następnie grupuje klastry metodą Warda.",
@@ -94,6 +96,7 @@ OPISY_METOD = {
 # =================================================================
 # SŁOWNIK OPISÓW WSTĘPNEGO PRZYGOTOWANIA DANYCH
 # =================================================================
+
 OPISY_PREPROCESSING = {
     "Standardowa": "Polega na klasycznej standaryzacji (Z-score). Sprowadza wszystkie punkty pomiarowe krzywych do wspólnej skali statystycznej.",
     "Analiza trendu": "Wyznacza różnice skończone (pochodne pierwszego rzędu) pomiędzy sąsiednimi punktami wzdłuż osi X.",
@@ -106,6 +109,7 @@ OPISY_PREPROCESSING = {
 # =================================================================
 # GLOBALNE FUNKCJE POMOCNICZE
 # =================================================================
+
 def inteligentne_pobranie_tabeli(df_raw):
     df_raw = df_raw.dropna(how='all', axis=0).dropna(how='all', axis=1)
     df_raw = df_raw.reset_index(drop=True)
@@ -127,10 +131,11 @@ def inteligentne_pobranie_tabeli(df_raw):
     df_czysty = df_czysty.dropna(subset=[df_czysty.columns[0]])
     return df_czysty
 
+
 def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3, df_sygnaly_raw=None):
     if nazwa_metody == "K-means":
         return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(dane) + 1
-        
+
     elif "Filtrowanie szumów (Rolling Mean) + Hierarchiczna" in nazwa_metody:
         if df_sygnaly_raw is not None:
             wygladzane = df_sygnaly_raw.rolling(window=5, center=True, min_periods=1).mean().T
@@ -142,37 +147,37 @@ def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3, df_sy
     elif "PCA + Hierarchiczna" in nazwa_metody:
         komponenty_pca = PCA(n_components=min(3, dane.shape[1]), random_state=42).fit_transform(dane)
         return fcluster(linkage(komponenty_pca, method='ward'), t=k_grup, criterion='maxclust')
-        
+
     elif "UMAP + Hierarchiczna" in nazwa_metody and umap_dostepne:
         przestrzen_2d = umap.UMAP(n_neighbors=15, min_dist=0.05, random_state=42).fit_transform(dane)
         return fcluster(linkage(przestrzen_2d, method='ward'), t=k_grup, criterion='maxclust')
-        
+
     elif "SOM + Hierarchiczna" in nazwa_metody:
         model_som = SiecSOM(x_size=5, y_size=5, input_dim=dane.shape[1], epochs=50, random_state=42)
         cechy_som = model_som.fit_predict_features(dane)
         return fcluster(linkage(cechy_som, method='ward'), t=k_grup, criterion='maxclust')
-        
+
     elif "Spectral + Hierarchiczna" in nazwa_metody:
         model_spec = SpectralClustering(n_clusters=k_grup, random_state=42, assign_labels='discretize')
         model_spec.fit(dane)
         aff_matrix = model_spec.affinity_matrix_ if hasattr(model_spec, 'affinity_matrix_') else dane
         return fcluster(linkage(aff_matrix, method='ward'), t=k_grup, criterion='maxclust')
-        
+
     elif "UMAP + HDBSCAN" in nazwa_metody and umap_dostepne:
         baza_projekcji = StandardScaler().fit_transform(dane)
         przestrzen_2d = umap.UMAP(n_neighbors=15, min_dist=0.05, random_state=42).fit_transform(baza_projekcji)
         raw_labels = HDBSCAN(min_cluster_size=min_hdbscan, min_samples=1).fit_predict(przestrzen_2d)
         return np.array([n + 1 if n >= 0 else 0 for n in raw_labels])
-        
+
     elif "Spectral + GMM" in nazwa_metody:
         gmm = GaussianMixture(n_components=k_grup, random_state=42, n_init=2)
         return gmm.fit_predict(dane) + 1
-        
+
     elif "SOM + K-means" in nazwa_metody:
         model_som = SiecSOM(x_size=5, y_size=5, input_dim=dane.shape[1], epochs=50, random_state=42)
         cechy_som = model_som.fit_predict_features(dane)
         return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(cechy_som) + 1
-        
+
     elif "Konsensusowe" in nazwa_metody:
         N = dane.shape[0]
         matrix = np.zeros((N, N))
@@ -183,56 +188,64 @@ def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3, df_sy
         for p in [p1, p2, p3, p4]:
             for i in range(N):
                 for j in range(N):
-                    if p[i] == p[j]: matrix[i, j] += 1
+                    if p[i] == p[j]:
+                        matrix[i, j] += 1
         link = linkage(1.0 - (matrix / 4.0), method='average')
         return fcluster(link, t=k_grup, criterion='maxclust')
-        
+
     elif "NMF" in nazwa_metody:
         dane_nmf = MinMaxScaler().fit_transform(dane) if (dane < 0).any() else dane
         W = NMF(n_components=k_grup, init='nndsvd', random_state=42, max_iter=200).fit_transform(dane_nmf)
         return np.argmax(W, axis=1) + 1
-        
+
     elif nazwa_metody == "GMM (Probabilistyczna)":
         return GaussianMixture(n_components=k_grup, random_state=42, n_init=2).fit_predict(dane) + 1
-        
+
     elif "BGMM" in nazwa_metody:
-        return BayesianGaussianMixture(n_components=k_grup, covariance_type='diag', weight_concentration_prior=1e-3, random_state=42, n_init=2).fit_predict(dane) + 1
-        
+        return BayesianGaussianMixture(
+            n_components=k_grup, covariance_type='diag',
+            weight_concentration_prior=1e-3, random_state=42, n_init=2
+        ).fit_predict(dane) + 1
+
     elif "metoda Warda" in nazwa_metody:
         return fcluster(linkage(dane, method='ward'), t=k_grup, criterion='maxclust')
-        
+
     elif "Korelacyjna" in nazwa_metody:
         return fcluster(linkage(dane, method='average', metric='correlation'), t=k_grup, criterion='maxclust')
-        
+
     elif nazwa_metody == "HDBSCAN (Gęstościowa - Auto K)":
         raw = HDBSCAN(min_cluster_size=min_hdbscan, min_samples=1).fit_predict(dane)
         return np.array([n + 1 if n >= 0 else 0 for n in raw])
-        
+
     elif "Spectral Clustering" in nazwa_metody:
         return SpectralClustering(n_clusters=k_grup, random_state=42, assign_labels='discretize').fit_predict(dane) + 1
-        
+
     elif "K-Shape" in nazwa_metody and tslearn_dostepne:
         return KShape(n_clusters=k_grup, random_state=42).fit_predict(to_time_series_dataset(dane)) + 1
-        
+
     else:
         return fcluster(linkage(dane, method='ward'), t=k_grup, criterion='maxclust')
 
-# Główne rysowanie ekranu
-st.title("📊 Interaktywny Analizator Krzywych AI Pro")
 
+# =================================================================
+# GŁÓWNY EKRAN APLIKACJI
+# =================================================================
+
+st.title("📊 Interaktywny Analizator Krzywych AI Pro")
 st.write("### Ustawienia analizy")
+
 typ_zrodla = st.radio("Wybierz źródło danych:", ["Plik Excel (.xlsx)", "Link do Google Sheets"], horizontal=True)
 
 df = None
 df_expert_raw = None
-file_id = "default"  
+file_id = "default"
 
 if typ_zrodla == "Plik Excel (.xlsx)":
     uploaded_file = st.file_uploader("Wgraj plik Excel", type=["xlsx"])
     if uploaded_file is not None:
         df_raw = pd.read_excel(uploaded_file, sheet_name=0, header=None)
         df = inteligentne_pobranie_tabeli(df_raw)
-        file_id = f"local_{len(df_raw)}_{df_raw.shape[1]}_{uploaded_file.size}" 
+        file_id = f"local_{len(df_raw)}_{df_raw.shape[1]}_{uploaded_file.size}"
         try:
             excel_file = pd.ExcelFile(uploaded_file)
             if "Ground Truth" in excel_file.sheet_names:
@@ -247,18 +260,21 @@ else:
         try:
             url_base = link_sheets.split("/edit")[0]
             df = inteligentne_pobranie_tabeli(pd.read_excel(f"{url_base}/export?format=xlsx", sheet_name=0, header=None))
-            file_id = f"cloud_{link_sheets[-15:]}" 
+            file_id = f"cloud_{link_sheets[-15:]}"
             sheets_dict = pd.read_excel(f"{url_base}/export?format=xlsx", sheet_name=None)
-            if "Ground Truth" in sheets_dict: df_expert_raw = sheets_dict["Ground Truth"]
-            elif len(sheets_dict) > 1: df_expert_raw = sheets_dict[list(sheets_dict.keys())[1]]
-        except Exception: st.error("Nie udało się pobrać danych ze struktur Google Sheets.")
+            if "Ground Truth" in sheets_dict:
+                df_expert_raw = sheets_dict["Ground Truth"]
+            elif len(sheets_dict) > 1:
+                df_expert_raw = sheets_dict[list(sheets_dict.keys())[1]]
+        except Exception:
+            st.error("Nie udało się pobrać danych ze struktur Google Sheets.")
 
 if df is not None:
     try:
         x = df.iloc[:, 0]
         krzywe = df.iloc[:, 1:]
         nazwy_krzywych = krzywe.columns.tolist()
-        
+
         lista_metod = [
             "Hierarchiczna Aglomeracyjna (metoda Warda)",
             "Filtrowanie szumów (Rolling Mean) + Hierarchiczna (metoda Warda)",
@@ -266,46 +282,64 @@ if df is not None:
             "UMAP + Hierarchiczna (metoda Warda)",
             "SOM + Hierarchiczna (metoda Warda)",
             "Spectral + Hierarchiczna (metoda Warda)",
-            "K-means", 
-            "UMAP + HDBSCAN (Hybryda Gęstościowa)", 
-            "Spectral + GMM (Hybryda Spektralno-Probabilistyczna)", 
-            "SOM + K-means (Hybryda sekwencyjna)", 
-            "Klastrowanie Konsensusowe (Ensemble Voting)", 
-            "NMF (Nieujemna Faktoryzacja Macierzy)", 
-            "GMM (Probabilistyczna)", 
-            "BGMM (Bayesowski GMM)", 
-            "Hierarchiczna Korelacyjna (metoda średnich)", 
-            "HDBSCAN (Gęstościowa - Auto K)", 
+            "K-means",
+            "UMAP + HDBSCAN (Hybryda Gęstościowa)",
+            "Spectral + GMM (Hybryda Spektralno-Probabilistyczna)",
+            "SOM + K-means (Hybryda sekwencyjna)",
+            "Klastrowanie Konsensusowe (Ensemble Voting)",
+            "NMF (Nieujemna Faktoryzacja Macierzy)",
+            "GMM (Probabilistyczna)",
+            "BGMM (Bayesowski GMM)",
+            "Hierarchiczna Korelacyjna (metoda średnich)",
+            "HDBSCAN (Gęstościowa - Auto K)",
             "Spectral Clustering"
         ]
-        if tslearn_dostepne: lista_metod.append("K-Shape (Kształt fali)")
+        if tslearn_dostepne:
+            lista_metod.append("K-Shape (Kształt fali)")
 
         lista_preprocessingow = ["Standardowa", "Analiza trendu"]
-        if umap_dostepne: lista_preprocessingow.append("UMAP (Redukcja topologiczna)")
+        if umap_dostepne:
+            lista_preprocessingow.append("UMAP (Redukcja topologiczna)")
         lista_preprocessingow.extend(["FeatureExtraction", "MinMaxScaler", "Filtrowanie szumów"])
 
         if 'wybrana_metoda' not in st.session_state or st.session_state.wybrana_metoda not in lista_metod:
             st.session_state.wybrana_metoda = lista_metod[0]
 
         col_param1, col_param2, col_param3 = st.columns(3)
-        with col_param1: metoda = st.selectbox("Wybierz metoda główną:", lista_metod, key="wybrana_metoda")
-        with col_param2: optymalizacja = st.selectbox("Wybierz wstępne przygotowanie danych:", lista_preprocessingow) if "K-Shape" not in metoda and "UMAP + HDBSCAN" not in metoda and "UMAP + Hierarchiczna" not in metoda else "Standardowa"
-        with col_param3: liczba_grup = st.slider("Minimalna wielkość grupy (HDBSCAN):" if "HDBSCAN" in metoda or "UMAP + HDBSCAN" in metoda else "Maksymalna liczba grup (BGMM):" if "BGMM" in metoda else "Liczba grup (K):", min_value=2, max_value=10, value=5)
+        with col_param1:
+            metoda = st.selectbox("Wybierz metodę główną:", lista_metod, key="wybrana_metoda")
+        with col_param2:
+            if "K-Shape" in metoda or "UMAP + HDBSCAN" in metoda or "UMAP + Hierarchiczna" in metoda:
+                optymalizacja = "Standardowa"
+            else:
+                optymalizacja = st.selectbox("Wybierz wstępne przygotowanie danych:", lista_preprocessingow)
+        with col_param3:
+            if "HDBSCAN" in metoda or "UMAP + HDBSCAN" in metoda:
+                slider_label = "Minimalna wielkość grupy (HDBSCAN):"
+            elif "BGMM" in metoda:
+                slider_label = "Maksymalna liczba grup (BGMM):"
+            else:
+                slider_label = "Liczba grup (K):"
+            liczba_grup = st.slider(slider_label, min_value=2, max_value=10, value=5)
 
         st.write("---")
         col_main, col_sidebar = st.columns([3, 1])
-        
+
         with col_sidebar:
             st.markdown("### Spodziewany Podział Grup")
             st.caption("Modyfikuj przypisania w locie na ekranie:")
-            
+
             sztywny_podzial_eksperta = {}
             for i in range(1, 44):
-                if i <= 17: sztywny_podzial_eksperta[f"y{i}"] = "a"
-                elif i <= 21: sztywny_podzial_eksperta[f"y{i}"] = "b"
-                elif i <= 35: sztywny_podzial_eksperta[f"y{i}"] = "c"
-                else: sztywny_podzial_eksperta[f"y{i}"] = "e"
-            
+                if i <= 17:
+                    sztywny_podzial_eksperta[f"y{i}"] = "a"
+                elif i <= 21:
+                    sztywny_podzial_eksperta[f"y{i}"] = "b"
+                elif i <= 35:
+                    sztywny_podzial_eksperta[f"y{i}"] = "c"
+                else:
+                    sztywny_podzial_eksperta[f"y{i}"] = "e"
+
             expert_mapping = {}
             if df_expert_raw is not None and len(df_expert_raw) > 0:
                 try:
@@ -315,30 +349,37 @@ if df is not None:
                     for _, row in df_expert_raw.iterrows():
                         k_str = str(row[col_k]).strip().lower()
                         v_str = str(row[col_g]).strip()
-                        if k_str: expert_mapping[k_str] = v_str
-                except Exception: pass
+                        if k_str:
+                            expert_mapping[k_str] = v_str
+                except Exception:
+                    pass
 
             expert_list = []
             for name in nazwy_krzywych:
                 name_clean = str(name).strip().lower()
                 name_alt = f"y{name_clean}" if not name_clean.startswith('y') and name_clean.isdigit() else name_clean
-                
-                if name_clean in expert_mapping: expert_list.append(expert_mapping[name_clean])
-                elif name_alt in expert_mapping: expert_list.append(expert_mapping[name_alt])
-                elif name_clean in sztywny_podzial_eksperta: expert_list.append(sztywny_podzial_eksperta[name_clean])
-                elif name_alt in sztywny_podzial_eksperta: expert_list.append(sztywny_podzial_eksperta[name_alt])
-                else: expert_list.append("a")
-                    
+                if name_clean in expert_mapping:
+                    expert_list.append(expert_mapping[name_clean])
+                elif name_alt in expert_mapping:
+                    expert_list.append(expert_mapping[name_alt])
+                elif name_clean in sztywny_podzial_eksperta:
+                    expert_list.append(sztywny_podzial_eksperta[name_clean])
+                elif name_alt in sztywny_podzial_eksperta:
+                    expert_list.append(sztywny_podzial_eksperta[name_alt])
+                else:
+                    expert_list.append("a")
+
             df_current_gt = pd.DataFrame({"Krzywa": [str(n) for n in nazwy_krzywych], "Grupa Eksperta": expert_list})
+
             if "last_file_id" not in st.session_state or st.session_state.last_file_id != file_id:
                 st.session_state.last_file_id = file_id
                 st.session_state["tabela_editor_state"] = df_current_gt
 
             edited_gt = st.data_editor(
-                st.session_state["tabela_editor_state"], 
-                width="stretch", 
-                hide_index=True, 
-                disabled=["Krzywa"], 
+                st.session_state["tabela_editor_state"],
+                width="stretch",
+                hide_index=True,
+                disabled=["Krzywa"],
                 key=f"editor_instance_{file_id}"
             )
             st.session_state["tabela_editor_state"] = edited_gt
@@ -354,7 +395,9 @@ if df is not None:
                     st.markdown(f"#### Obróbka Wstępna: `{optymalizacja}`")
                     st.write(OPISY_PREPROCESSING.get(optymalizacja, ""))
 
+            # -----------------------------------------------------------------
             # PRZETWARZANIE DANYCH WEJŚCIOWYCH
+            # -----------------------------------------------------------------
             if optymalizacja == "Analiza trendu":
                 dane_do_algorytmu = StandardScaler().fit_transform(krzywe.diff(axis=0).fillna(0).T)
             elif optymalizacja == "UMAP (Redukcja topologiczna)" and umap_dostepne:
@@ -366,10 +409,11 @@ if df is not None:
                 cechy['Poz_Max'] = krzywe.idxmax().apply(lambda idx: x.iloc[idx]).values
                 cechy['Srednia'] = krzywe.mean().values
                 cechy['Std'] = krzywe.std().values
-                cechy['Skośność'] = krzywe.skew().values
+                cechy['Skosnosc'] = krzywe.skew().values
                 cechy['Kurtoza'] = krzywe.kurt().values
                 fft_amplitudy = np.abs(np.fft.rfft(krzywe, axis=0))
-                for f_idx in range(1, min(4, fft_amplitudy.shape[0])): cechy[f'FFT_Składowa_{f_idx}'] = fft_amplitudy[f_idx, :]
+                for f_idx in range(1, min(4, fft_amplitudy.shape[0])):
+                    cechy[f'FFT_Skladowa_{f_idx}'] = fft_amplitudy[f_idx, :]
                 dwt_a_mean, dwt_d_energy, dwt_d_std = [], [], []
                 for col in krzywe.columns:
                     sig = krzywe[col].values[:-1] if len(krzywe[col].values) % 2 != 0 else krzywe[col].values
@@ -385,7 +429,9 @@ if df is not None:
             elif optymalizacja == "MinMaxScaler":
                 dane_do_algorytmu = MinMaxScaler().fit_transform(krzywe.T)
             elif optymalizacja == "Filtrowanie szumów":
-                dane_do_algorytmu = StandardScaler().fit_transform(krzywe.rolling(window=5, center=True, min_periods=1).mean().T)
+                dane_do_algorytmu = StandardScaler().fit_transform(
+                    krzywe.rolling(window=5, center=True, min_periods=1).mean().T
+                )
             else:
                 dane_do_algorytmu = StandardScaler().fit_transform(krzywe.T)
 
@@ -393,8 +439,8 @@ if df is not None:
 
             ari_score = adjusted_rand_score(etykiety_eksperta, numery_grup) * 100
             nmi_score = normalized_mutual_info_score(etykiety_eksperta, numery_grup) * 100
-            
-            st.markdown(f"### Skuteczność dopasowania:")
+
+            st.markdown("### Skuteczność dopasowania:")
             kpi_ari, kpi_nmi = st.columns(2)
             kpi_ari.metric("Indeks ARI", f"{ari_score:.1f}%")
             kpi_nmi.metric("Indeks NMI", f"{nmi_score:.1f}%")
@@ -402,12 +448,15 @@ if df is not None:
             # =================================================================
             # WYKRES 1: WSZYSTKIE KRZYWE (Z OKREŚLENIEM LEGENDY)
             # =================================================================
-            st.subheader("Wykres 1: Wszystkie sklastrowane krzywe")
+            st.subheader("Wykres 1: Wszystkie sklasterowane krzywe")
             fig, ax = plt.subplots(figsize=(10, 4.2))
             cmap = plt.get_cmap('tab10')
-            
+
             if "Hierarchiczna" in metoda and "+" not in metoda:
-                dendrogram(linkage(dane_do_algorytmu, method='ward' if "Warda" in metoda else 'average'), labels=nazwy_krzywych, leaf_rotation=90, ax=ax)
+                dendrogram(
+                    linkage(dane_do_algorytmu, method='ward' if "Warda" in metoda else 'average'),
+                    labels=nazwy_krzywych, leaf_rotation=90, ax=ax
+                )
             else:
                 dodane_do_legendy = set()
                 for i, col in enumerate(krzywe.columns):
@@ -415,16 +464,14 @@ if df is not None:
                     kolor_id = (klaster_id - 1) % 10 if klaster_id > 0 else -1
                     kolor = cmap(kolor_id) if klaster_id > 0 else 'gray'
                     etykieta = f"Klaster {klaster_id}" if klaster_id > 0 else "Szum / Odrzuty"
-                    
                     if klaster_id not in dodane_do_legendy:
                         ax.plot(x, krzywe[col], color=kolor, alpha=0.5, label=etykieta)
                         dodane_do_legendy.add(klaster_id)
                     else:
                         ax.plot(x, krzywe[col], color=kolor, alpha=0.5)
-                        
                 ax.grid(True, linestyle='--', alpha=0.5)
                 ax.legend(loc='upper right', bbox_to_anchor=(1.15, 1.0))
-                
+
             st.pyplot(fig)
             plt.close(fig)
 
@@ -434,27 +481,23 @@ if df is not None:
             if not ("Hierarchiczna" in metoda and "+" not in metoda):
                 st.subheader("Wykres 2: Uśrednione profile modelowe (Wzorce kształtu fali)")
                 fig_srednie, ax_srednie = plt.subplots(figsize=(10, 4.2))
-                
+
                 unikalne_klastry = sorted(list(set(numery_grup)))
                 for k_id in unikalne_klastry:
-                    # Wyciągamy krzywe należące do danego klastra
                     maska_klastra = [numery_grup[idx] == k_id for idx in range(len(numery_grup))]
                     krzywe_klastra = krzywe.iloc[:, maska_klastra]
-                    
                     if krzywe_klastra.shape[1] > 0:
-                        # Obliczanie średniej oraz odchylenia standardowego wzdłuż osi X
                         profil_sredni = krzywe_klastra.mean(axis=1)
-                        profil_std = krzywe_klastra.std(axis=1).fillna(0) # Zabezpieczenie na wypadek klastra z 1 krzywą
-                        
+                        profil_std = krzywe_klastra.std(axis=1).fillna(0)
                         kolor_id = (k_id - 1) % 10 if k_id > 0 else -1
                         kolor = cmap(kolor_id) if k_id > 0 else 'gray'
                         label_sredni = f"Wzorzec Klastra {k_id}" if k_id > 0 else "Średnia Szumu"
-                        
-                        # Rysowanie linii reprezentatywnej
                         ax_srednie.plot(x, profil_sredni, color=kolor, linewidth=2.5, label=label_sredni)
-                        # Rysowanie cienia wariancji (wstęga błędu ±1 sigma)
-                        ax_srednie.fill_between(x, profil_sredni - profil_std, profil_sredni + profil_std, color=kolor, alpha=0.15)
-                
+                        ax_srednie.fill_between(
+                            x, profil_sredni - profil_std, profil_sredni + profil_std,
+                            color=kolor, alpha=0.15
+                        )
+
                 ax_srednie.grid(True, linestyle='--', alpha=0.5)
                 ax_srednie.legend(loc='upper right', bbox_to_anchor=(1.15, 1.0))
                 st.pyplot(fig_srednie)
@@ -465,24 +508,29 @@ if df is not None:
             # =================================================================
             if not ("Hierarchiczna" in metoda and "+" not in metoda):
                 st.markdown("#### 📊 Szczegółowy skład wygenerowanych klastrów:")
-                NAZWY_KOLOROW = ["Niebieski", "Pomarańczowy", "Zielony", "Czerwony", "Fioletowy", "Brązowy", "Różowy", "Szary", "Oliwkowy", "Jasnoniebieski"]
-                
+
+                NAZWY_KOLOROW = [
+                    "Niebieski", "Pomarańczowy", "Zielony", "Czerwony", "Fioletowy",
+                    "Brązowy", "Różowy", "Szary", "Oliwkowy", "Jasnoniebieski"
+                ]
+
                 klastry_slownik = {}
                 for i, col in enumerate(krzywe.columns):
                     k_id = numery_grup[i]
-                    if k_id not in klastry_slownik: klastry_slownik[k_id] = []
+                    if k_id not in klastry_slownik:
+                        klastry_slownik[k_id] = []
                     klastry_slownik[k_id].append(str(col))
-                
+
                 posortowane_klastry = sorted(klastry_slownik.keys())
                 liczba_klastrow = len(posortowane_klastry)
-                
+
                 if liczba_klastrow > 0:
                     kolumny_klastrow = st.columns(min(liczba_klastrow, 4))
                     for idx, k_id in enumerate(posortowane_klastry):
                         col_ui = kolumny_klastrow[idx % 4]
                         with col_ui:
                             if k_id == 0:
-                                st.markdown(f"**⚪ Szum / Odrzuty**")
+                                st.markdown("**⚪ Szum / Odrzuty**")
                                 st.caption(f"Liczba: {len(klastry_slownik[k_id])}")
                                 st.code(", ".join(klastry_slownik[k_id]), language="text")
                             else:
@@ -490,6 +538,60 @@ if df is not None:
                                 st.markdown(f"**🔹 Klaster {k_id}** ({n_koloru})")
                                 st.caption(f"Liczba: {len(klastry_slownik[k_id])}")
                                 st.code(", ".join(klastry_slownik[k_id]), language="text")
+
+                # =================================================================
+                # EKSPORT SKŁADU KLASTRÓW DO CSV I EXCEL
+                # =================================================================
+                st.markdown("##### 💾 Pobierz skład klastrów:")
+
+                wiersze_eksportu = []
+                for k_id in posortowane_klastry:
+                    if k_id == 0:
+                        nazwa_klastra = "Szum / Odrzuty"
+                        nazwa_koloru = "Szary"
+                    else:
+                        nazwa_klastra = f"Klaster {k_id}"
+                        nazwa_koloru = NAZWY_KOLOROW[(k_id - 1) % 10]
+                    for krzywa in klastry_slownik[k_id]:
+                        wiersze_eksportu.append({
+                            "Krzywa": krzywa,
+                            "Klaster": nazwa_klastra,
+                            "Kolor": nazwa_koloru,
+                            "Nr Klastra": k_id
+                        })
+
+                df_eksport = pd.DataFrame(wiersze_eksportu)
+
+                col_exp_csv, col_exp_xlsx = st.columns(2)
+
+                with col_exp_csv:
+                    csv_bytes = df_eksport.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+                    st.download_button(
+                        label="⬇️ Pobierz CSV",
+                        data=csv_bytes,
+                        file_name=f"sklady_klastrow_{metoda[:20].replace(' ', '_')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+
+                with col_exp_xlsx:
+                    bufor_xlsx = io.BytesIO()
+                    with pd.ExcelWriter(bufor_xlsx, engine="openpyxl") as writer:
+                        df_eksport.to_excel(writer, index=False, sheet_name="Skład Klastrów")
+                        arkusz = writer.sheets["Skład Klastrów"]
+                        arkusz.column_dimensions["A"].width = 20
+                        arkusz.column_dimensions["B"].width = 20
+                        arkusz.column_dimensions["C"].width = 18
+                        arkusz.column_dimensions["D"].width = 12
+                    bufor_xlsx.seek(0)
+                    st.download_button(
+                        label="⬇️ Pobierz Excel",
+                        data=bufor_xlsx.getvalue(),
+                        file_name=f"sklady_klastrow_{metoda[:20].replace(' ', '_')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+
                 st.write("---")
 
             # =================================================================
@@ -497,57 +599,57 @@ if df is not None:
             # =================================================================
             with st.expander("🔍 Silnik Diagnostyczny AI: Znajdź anomalie psujące wynik", expanded=True):
                 st.markdown("Algorytm izoluje po kolei każdą krzywą z bazy danych, uruchamia grupowanie od nowa i bada, jak jej brak wpływa na globalny wskaźnik ARI.")
-                
+
                 wyniki_loo = []
                 N_samples = dane_do_algorytmu.shape[0]
-                
+
                 for odrzucona_idx in range(N_samples):
                     maska = np.ones(N_samples, dtype=bool)
                     maska[odrzucona_idx] = False
-                    
+
                     dane_sub = dane_do_algorytmu[maska]
                     etykiety_eksperta_sub = [etykiety_eksperta[idx] for idx in range(N_samples) if maska[idx]]
-                    
+
                     if "Filtrowanie szumów (Rolling Mean) + Hierarchiczna" in metoda:
                         krzywe_sub = krzywe.iloc[:, maska]
                     else:
                         krzywe_sub = krzywe
-                        
+
                     pred_sub = uruchom_silnik_klastrowania(metoda, dane_sub, liczba_grup, liczba_grup, df_sygnaly_raw=krzywe_sub)
                     sub_ari = adjusted_rand_score(etykiety_eksperta_sub, pred_sub) * 100
                     wplyw = sub_ari - ari_score
-                    
+
                     wyniki_loo.append({
                         "Odrzucona Krzywa": str(nazwy_krzywych[odrzucona_idx]),
                         "Nowe ARI po usunięciu (%)": round(sub_ari, 2),
                         "Wpływ na model": round(wplyw, 2)
                     })
-                
+
                 df_loo = pd.DataFrame(wyniki_loo).sort_values(by="Wpływ na model", ascending=False).reset_index(drop=True)
-                
+
                 col_loo1, col_loo2 = st.columns(2)
                 with col_loo1:
-                    st.markdown("##### 🚨 „Czarne Owce” (Usunięcie tych krzywych PODNOSI wynik):")
+                    st.markdown('##### 🚨 "Czarne Owce" (Usunięcie tych krzywych PODNOSI wynik):')
                     df_czarne = df_loo[df_loo["Wpływ na model"] > 0.01].reset_index(drop=True)
                     if not df_czarne.empty:
                         st.dataframe(df_czarne.style.format({"Wpływ na model": "+{:.2f}%"}), width="stretch", hide_index=True)
                     else:
                         st.info("Brak wyraźnych anomalii psujących wynik. Wszystkie krzywe wspierają model.")
-                        
+
                 with col_loo2:
-                    st.markdown("##### 🧱 „Filary Modelu” (Usunięcie tych krzywych drastycznie OBNIŻA wynik):")
+                    st.markdown('##### 🧱 "Filary Modelu" (Usunięcie tych krzywych drastycznie OBNIŻA wynik):')
                     df_filary = df_loo[df_loo["Wpływ na model"] < -0.01].sort_values(by="Wpływ na model", ascending=True).reset_index(drop=True)
                     if not df_filary.empty:
                         st.dataframe(df_filary.style.format({"Wpływ na model": "{:.2f}%"}), width="stretch", hide_index=True)
                     else:
-                        st.info("Brak kluczowych filarów – podział grup jest stabilny rozproszony.")
+                        st.info("Brak kluczowych filarów — podział grup jest stabilny rozproszony.")
 
         # =================================================================
         # AUTOMATYCZNY RANKING METOD (TURNIEJ AI - ZABEZPIECZONY)
         # =================================================================
         st.write("---")
         st.subheader("Ranking Skuteczności Algorytmów")
-        
+
         rekordy_rankingu = []
         for m_nazwa in lista_metod:
             try:
@@ -555,21 +657,25 @@ if df is not None:
                 m_ari = adjusted_rand_score(etykiety_eksperta, pred_etykiety) * 100
                 m_nmi = normalized_mutual_info_score(etykiety_eksperta, pred_etykiety) * 100
                 rekordy_rankingu.append({
-                    "Algorytm AI": m_nazwa, 
-                    "Zgodność ARI (%)": round(m_ari, 2), 
-                    "Zbieżność Informacji NMI (%)": round(m_nmi, 2), 
+                    "Algorytm AI": m_nazwa,
+                    "Zgodność ARI (%)": round(m_ari, 2),
+                    "Zbieżność Informacji NMI (%)": round(m_nmi, 2),
                     "Średnia Skuteczność (%)": round((m_ari + m_nmi) / 2, 2)
                 })
-            except Exception: 
-                pass 
-            
+            except Exception:
+                pass
+
         if len(rekordy_rankingu) > 0:
-            df_leaderboard = pd.DataFrame(rekordy_rankingu).sort_values(by="Średnia Skuteczność (%)", ascending=False).reset_index(drop=True)
+            df_leaderboard = pd.DataFrame(rekordy_rankingu).sort_values(
+                by="Średnia Skuteczność (%)", ascending=False
+            ).reset_index(drop=True)
             df_leaderboard.index += 1
             st.table(df_leaderboard)
         else:
             st.info("Trwa inicjalizacja rankingu modeli...")
 
-    except Exception as ob_blad: st.error(f"Błąd krytyczny podczas renderowania: {ob_blad}")
+    except Exception as ob_blad:
+        st.error(f"Błąd krytyczny podczas renderowania: {ob_blad}")
+
 else:
     st.info("Aby rozpocząć, wgraj plik z dysku lub wklej link do Google Sheets powyżej.")
