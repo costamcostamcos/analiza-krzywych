@@ -507,10 +507,18 @@ if df is not None:
             st.session_state.last_file_id = file_id
             st.session_state["tabela_editor_state"] = df_current_gt
 
-        # Buduj HTML tabelki do wstrzyknięcia w panel
+        # Buduj edytowalną tabelkę HTML dla panelu
         rows_html = ""
         for _, row in st.session_state["tabela_editor_state"].iterrows():
-            rows_html += f"<tr><td>{row['Krzywa']}</td><td>{row['Grupa Eksperta']}</td></tr>"
+            rows_html += (
+                f'<tr>'
+                f'<td>{row["Krzywa"]}</td>'
+                f'<td contenteditable="true" '
+                f'onblur="zapiszGrupe(this, \'{row["Krzywa"]}\')" '
+                f'style="background:#fffbe6;cursor:text;min-width:60px">'
+                f'{row["Grupa Eksperta"]}</td>'
+                f'</tr>'
+            )
 
         # Dane eksportu CSV (base64) do przycisku w panelu
         df_eksport_panel = st.session_state.get("df_eksport_klastry", pd.DataFrame())
@@ -633,13 +641,13 @@ if df is not None:
             // Przycisk
             var btn = doc.createElement('button');
             btn.id = 'drawer-toggle';
-            btn.innerHTML = '&#x276F;&#x276F; Panel';
+            btn.innerHTML = '&#x276F;&#x276F; Grupy Wzorcowe';
             btn.onclick = function() {{
                 var d = doc.getElementById('side-drawer');
                 d.classList.toggle('open');
                 btn.innerHTML = d.classList.contains('open')
-                    ? '&#x276E;&#x276E; Panel'
-                    : '&#x276F;&#x276F; Panel';
+                    ? '&#x276E;&#x276E; Grupy Wzorcowe'
+                    : '&#x276F;&#x276F; Grupy Wzorcowe';
             }};
             doc.body.appendChild(btn);
 
@@ -648,25 +656,53 @@ if df is not None:
             if (closeBtn) {{
                 closeBtn.onclick = function() {{
                     doc.getElementById('side-drawer').classList.remove('open');
-                    btn.innerHTML = '&#x276F;&#x276F; Panel';
+                    btn.innerHTML = '&#x276F;&#x276F; Grupy Wzorcowe';
                 }};
             }}
+
+            // Funkcja wywoływana przy edycji komórki grupy
+            window.zapiszGrupe = function(cell, krzywaNazwa) {{
+                var nowaGrupa = cell.innerText.trim();
+                // Wyślij zmianę do Streamlit przez ukryty input w głównym dokumencie
+                var hiddenKey = 'gt_edit__' + krzywaNazwa;
+                var existing = doc.getElementById(hiddenKey);
+                if (!existing) {{
+                    existing = doc.createElement('input');
+                    existing.type = 'hidden';
+                    existing.id = hiddenKey;
+                    doc.body.appendChild(existing);
+                }}
+                existing.value = nowaGrupa;
+                // Zaktualizuj session_state przez Streamlit componentValue
+                window.parent.postMessage({{
+                    type: 'streamlit:setComponentValue',
+                    value: JSON.stringify({{krzywa: krzywaNazwa, grupa: nowaGrupa}})
+                }}, '*');
+            }};
         }})();
         </script>
         """
         components.html(inject_script, height=0)
 
-        # Edytor tabelki w głównym obszarze (ukryty wizualnie przez CSS — dane z niego idą do session_state)
+        # Edytor tabelki — pełny data_editor do edycji przypisań
         with st.expander("📋 Edytuj Spodziewany Podział Grup", expanded=False):
+            st.caption("Edytuj kolumnę 'Grupa Eksperta' — zmiany są od razu stosowane w obliczeniach.")
             edited_gt = st.data_editor(
                 st.session_state["tabela_editor_state"],
                 width="stretch",
                 hide_index=True,
                 disabled=["Krzywa"],
-                key=f"editor_instance_{file_id}"
+                key=f"editor_instance_{file_id}",
+                column_config={
+                    "Krzywa": st.column_config.TextColumn("Krzywa", disabled=True),
+                    "Grupa Eksperta": st.column_config.TextColumn(
+                        "Grupa Eksperta",
+                        help="Wpisz nazwę grupy (np. a, b, c...)",
+                        max_chars=20,
+                    )
+                }
             )
             st.session_state["tabela_editor_state"] = edited_gt
-            st.caption("Zmiany są natychmiast widoczne w panelu bocznym po odświeżeniu.")
 
         etykiety_eksperta = edited_gt["Grupa Eksperta"].astype(str).tolist()
 
@@ -884,8 +920,6 @@ if df is not None:
         # DYNAMICZNY OPIS KOLORÓW I SKŁADU KLASTRÓW POD WYKRESEM
         # =================================================================
         if not ("Hierarchiczna" in metoda and "+" not in metoda):
-            st.markdown("#### 📊 Szczegółowy skład wygenerowanych klastrów:")
-
             NAZWY_KOLOROW = [
                 "Niebieski", "Pomarańczowy", "Zielony", "Czerwony", "Fioletowy",
                 "Brązowy", "Różowy", "Szary", "Oliwkowy", "Jasnoniebieski"
@@ -901,22 +935,7 @@ if df is not None:
             posortowane_klastry = sorted(klastry_slownik.keys())
             liczba_klastrow = len(posortowane_klastry)
 
-            if liczba_klastrow > 0:
-                kolumny_klastrow = st.columns(min(liczba_klastrow, 4))
-                for idx, k_id in enumerate(posortowane_klastry):
-                    col_ui = kolumny_klastrow[idx % 4]
-                    with col_ui:
-                        if k_id == 0:
-                                st.markdown("**⚪ Szum / Odrzuty**")
-                                st.caption(f"Liczba: {len(klastry_slownik[k_id])}")
-                                st.code(", ".join(klastry_slownik[k_id]), language="text")
-                        else:
-                                n_koloru = NAZWY_KOLOROW[(k_id - 1) % 10]
-                                st.markdown(f"**🔹 Klaster {k_id}** ({n_koloru})")
-                                st.caption(f"Liczba: {len(klastry_slownik[k_id])}")
-                                st.code(", ".join(klastry_slownik[k_id]), language="text")
-
-            # Zapisz dane eksportu do session_state — pobierze je panel w col_sidebar
+            # Buduj df eksportu
             wiersze_eksportu = []
             for k_id in posortowane_klastry:
                 if k_id == 0:
@@ -932,10 +951,53 @@ if df is not None:
                         "Kolor": nazwa_koloru,
                         "Nr Klastra": k_id
                     })
-            st.session_state["df_eksport_klastry"] = pd.DataFrame(wiersze_eksportu)
-            st.session_state["eksport_metoda"] = metoda
+            df_eksport_klastr = pd.DataFrame(wiersze_eksportu)
 
-            st.write("---")
+            with st.expander("📊 Szczegółowy skład wygenerowanych klastrów", expanded=False):
+                if liczba_klastrow > 0:
+                    kolumny_klastrow = st.columns(min(liczba_klastrow, 4))
+                    for idx, k_id in enumerate(posortowane_klastry):
+                        col_ui = kolumny_klastrow[idx % 4]
+                        with col_ui:
+                            if k_id == 0:
+                                st.markdown("**⚪ Szum / Odrzuty**")
+                                st.caption(f"Liczba: {len(klastry_slownik[k_id])}")
+                                st.code(", ".join(klastry_slownik[k_id]), language="text")
+                            else:
+                                n_koloru = NAZWY_KOLOROW[(k_id - 1) % 10]
+                                st.markdown(f"**🔹 Klaster {k_id}** ({n_koloru})")
+                                st.caption(f"Liczba: {len(klastry_slownik[k_id])}")
+                                st.code(", ".join(klastry_slownik[k_id]), language="text")
+
+                st.markdown("---")
+                st.markdown("##### 💾 Pobierz wygenerowany skład klastrów:")
+                col_exp_csv, col_exp_xlsx = st.columns(2)
+                with col_exp_csv:
+                    csv_bytes = df_eksport_klastr.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+                    st.download_button(
+                        label="⬇️ Pobierz CSV",
+                        data=csv_bytes,
+                        file_name=f"sklady_klastrow_{metoda[:20].replace(' ', '_')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                with col_exp_xlsx:
+                    bufor_xlsx = io.BytesIO()
+                    with pd.ExcelWriter(bufor_xlsx, engine="openpyxl") as writer:
+                        df_eksport_klastr.to_excel(writer, index=False, sheet_name="Skład Klastrów")
+                        arkusz = writer.sheets["Skład Klastrów"]
+                        arkusz.column_dimensions["A"].width = 20
+                        arkusz.column_dimensions["B"].width = 20
+                        arkusz.column_dimensions["C"].width = 18
+                        arkusz.column_dimensions["D"].width = 12
+                    bufor_xlsx.seek(0)
+                    st.download_button(
+                        label="⬇️ Pobierz Excel",
+                        data=bufor_xlsx.getvalue(),
+                        file_name=f"sklady_klastrow_{metoda[:20].replace(' ', '_')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
 
         # =================================================================
         # MSE ANOMALY DETECTION — odległość krzywej od centroidu klastra
@@ -1057,51 +1119,49 @@ if df is not None:
         # =================================================================
         # AUTOMATYCZNY RANKING METOD — silhouette_score + ARI + NMI
         # =================================================================
-        st.write("---")
-        st.subheader("Ranking Skuteczności Algorytmów")
+        with st.expander("🏆 Ranking Skuteczności Algorytmów", expanded=False):
 
-        @st.cache_data(show_spinner=False)
-        def oblicz_ranking(_dane, _etykiety_eksperta, _krzywe, lista_metod, liczba_grup, _metoda_glowna):
-            """Cached: przelicza się tylko gdy zmienią się dane wejściowe lub parametry."""
-            rekordy = []
-            for m_nazwa in lista_metod:
-                try:
-                    pred = uruchom_silnik_klastrowania(m_nazwa, _dane, liczba_grup, liczba_grup, _df_sygnaly_raw=_krzywe)
-                    unikalne = np.unique(pred[pred > 0]) if 0 in pred else np.unique(pred)
-                    if len(unikalne) < 2:
-                        raise ValueError("Za mało klastrów do silhouette")
-                    m_ari = adjusted_rand_score(_etykiety_eksperta, pred) * 100
-                    m_nmi = normalized_mutual_info_score(_etykiety_eksperta, pred) * 100
-                    # silhouette tylko dla punktów nie będących szumem
-                    maska_nie_szum = pred > 0
-                    if maska_nie_szum.sum() >= 2 and len(np.unique(pred[maska_nie_szum])) >= 2:
-                        m_sil = silhouette_score(_dane[maska_nie_szum], pred[maska_nie_szum]) * 100
-                    else:
-                        m_sil = silhouette_score(_dane, pred) * 100
-                    rekordy.append({
-                        "Algorytm AI": m_nazwa,
-                        "ARI (%)": round(m_ari, 2),
-                        "NMI (%)": round(m_nmi, 2),
-                        "Silhouette (%)": round(m_sil, 2),
-                        "Średnia (ARI+NMI+Sil) (%)": round((m_ari + m_nmi + m_sil) / 3, 2)
-                    })
-                except Exception:
-                    pass
-            return rekordy
+            @st.cache_data(show_spinner=False)
+            def oblicz_ranking(_dane, _etykiety_eksperta, _krzywe, lista_metod, liczba_grup, _metoda_glowna):
+                """Cached: przelicza się tylko gdy zmienią się dane wejściowe lub parametry."""
+                rekordy = []
+                for m_nazwa in lista_metod:
+                    try:
+                        pred = uruchom_silnik_klastrowania(m_nazwa, _dane, liczba_grup, liczba_grup, _df_sygnaly_raw=_krzywe)
+                        unikalne = np.unique(pred[pred > 0]) if 0 in pred else np.unique(pred)
+                        if len(unikalne) < 2:
+                            raise ValueError("Za mało klastrów do silhouette")
+                        m_ari = adjusted_rand_score(_etykiety_eksperta, pred) * 100
+                        m_nmi = normalized_mutual_info_score(_etykiety_eksperta, pred) * 100
+                        maska_nie_szum = pred > 0
+                        if maska_nie_szum.sum() >= 2 and len(np.unique(pred[maska_nie_szum])) >= 2:
+                            m_sil = silhouette_score(_dane[maska_nie_szum], pred[maska_nie_szum]) * 100
+                        else:
+                            m_sil = silhouette_score(_dane, pred) * 100
+                        rekordy.append({
+                            "Algorytm AI": m_nazwa,
+                            "ARI (%)": round(m_ari, 2),
+                            "NMI (%)": round(m_nmi, 2),
+                            "Silhouette (%)": round(m_sil, 2),
+                            "Średnia (ARI+NMI+Sil) (%)": round((m_ari + m_nmi + m_sil) / 3, 2)
+                        })
+                    except Exception:
+                        pass
+                return rekordy
 
-        rekordy_rankingu = oblicz_ranking(
-            dane_do_algorytmu, etykiety_eksperta, krzywe,
-            lista_metod, liczba_grup, metoda
-        )
+            rekordy_rankingu = oblicz_ranking(
+                dane_do_algorytmu, etykiety_eksperta, krzywe,
+                lista_metod, liczba_grup, metoda
+            )
 
-        if len(rekordy_rankingu) > 0:
-            df_leaderboard = pd.DataFrame(rekordy_rankingu).sort_values(
-                by="Średnia (ARI+NMI+Sil) (%)", ascending=False
-            ).reset_index(drop=True)
-            df_leaderboard.index += 1
-            st.table(df_leaderboard)
-        else:
-            st.info("Trwa inicjalizacja rankingu modeli...")
+            if len(rekordy_rankingu) > 0:
+                df_leaderboard = pd.DataFrame(rekordy_rankingu).sort_values(
+                    by="Średnia (ARI+NMI+Sil) (%)", ascending=False
+                ).reset_index(drop=True)
+                df_leaderboard.index += 1
+                st.table(df_leaderboard)
+            else:
+                st.info("Trwa inicjalizacja rankingu modeli...")
 
     except Exception as ob_blad:
         st.error(f"Błąd krytyczny podczas renderowania: {ob_blad}")
