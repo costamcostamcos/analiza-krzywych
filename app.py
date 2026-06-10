@@ -3,11 +3,12 @@ import streamlit.components.v1 as components
 import pandas as pd
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
+import base64
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.cluster import KMeans, HDBSCAN, SpectralClustering
 from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
 from sklearn.decomposition import NMF, PCA
-from sklearn.metrics import silhouette_score, adjusted_rand_score, normalized_mutual_info_score
+from sklearn.metrics import silhouette_score, adjusted_rand_score, normalized_mutual_info_score, davies_bouldin_score, calinski_harabasz_score
 from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
 import io
 import numpy as np
@@ -525,7 +526,6 @@ if df is not None:
         eksport_dostepny = not df_eksport_panel.empty
         if eksport_dostepny:
             csv_str = df_eksport_panel.to_csv(index=False, encoding="utf-8-sig")
-            import base64
             csv_b64 = base64.b64encode(csv_str.encode("utf-8-sig")).decode()
             nazwa_pliku_csv = f"sklady_klastrow_{metoda[:20].replace(' ', '_')}.csv"
         else:
@@ -684,27 +684,126 @@ if df is not None:
         """
         components.html(inject_script, height=0)
 
-        # Edytor tabelki — pełny data_editor do edycji przypisań
-        with st.expander("📋 Edytuj Spodziewany Podział Grup", expanded=False):
-            st.caption("Edytuj kolumnę 'Grupa Eksperta' — zmiany są od razu stosowane w obliczeniach.")
-            edited_gt = st.data_editor(
-                st.session_state["tabela_editor_state"],
-                width="stretch",
-                hide_index=True,
-                disabled=["Krzywa"],
-                key=f"editor_instance_{file_id}",
-                column_config={
-                    "Krzywa": st.column_config.TextColumn("Krzywa", disabled=True),
-                    "Grupa Eksperta": st.column_config.TextColumn(
-                        "Grupa Eksperta",
-                        help="Wpisz nazwę grupy (np. a, b, c...)",
-                        max_chars=20,
-                    )
-                }
-            )
-            st.session_state["tabela_editor_state"] = edited_gt
-
+        # data_editor ukryty wizualnie — dostarcza etykiety_eksperta do obliczeń.
+        # Panel boczny "Grupy Wzorcowe" przejął rolę edycji wizualnej.
+        st.markdown(
+            "<style>[data-testid='stDataEditor'] { display: none !important; }</style>",
+            unsafe_allow_html=True
+        )
+        edited_gt = st.data_editor(
+            st.session_state["tabela_editor_state"],
+            width="stretch",
+            hide_index=True,
+            disabled=["Krzywa"],
+            key=f"editor_instance_{file_id}",
+            label_visibility="collapsed",
+            column_config={
+                "Krzywa": st.column_config.TextColumn("Krzywa", disabled=True),
+                "Grupa Eksperta": st.column_config.TextColumn("Grupa Eksperta", max_chars=20)
+            }
+        )
+        st.session_state["tabela_editor_state"] = edited_gt
         etykiety_eksperta = edited_gt["Grupa Eksperta"].astype(str).tolist()
+
+        # =================================================================
+        # SUGESTIA LICZBY KLASTRÓW — Elbow, Silhouette, Davies-Bouldin, Gap
+        # =================================================================
+        with st.expander("📐 Sugestia Optymalnej Liczby Klastrów (K)", expanded=False):
+            st.markdown(
+                "Wykresy pomagają dobrać właściwą liczbę grup **K** przed uruchomieniem klasteryzacji. "
+                "Każda metoda patrzy na problem z innej strony."
+            )
+
+            @st.cache_data(show_spinner=False)
+            def oblicz_metryki_k(_dane, k_min=2, k_max=10):
+                from sklearn.metrics import davies_bouldin_score, calinski_harabasz_score
+                inercje, silhouettes, db_scores, calinski = [], [], [], []
+                zakres_k = list(range(k_min, k_max + 1))
+                for k in zakres_k:
+                    km = KMeans(n_clusters=k, random_state=42, n_init=5).fit(_dane)
+                    labels = km.labels_
+                    inercje.append(km.inertia_)
+                    silhouettes.append(silhouette_score(_dane, labels))
+                    db_scores.append(davies_bouldin_score(_dane, labels))
+                    calinski.append(calinski_harabasz_score(_dane, labels))
+                return zakres_k, inercje, silhouettes, db_scores, calinski
+
+            dane_dla_k = StandardScaler().fit_transform(krzywe.T)
+            zakres_k, inercje, silhouettes, db_scores, calinski = oblicz_metryki_k(dane_dla_k)
+
+            # Automatyczna detekcja "łokcia" — największa zmiana drugiej pochodnej inercji
+            diff2 = np.diff(np.diff(inercje))
+            k_elbow = zakres_k[int(np.argmax(diff2)) + 1]
+            k_silhouette = zakres_k[int(np.argmax(silhouettes))]
+            k_db = zakres_k[int(np.argmin(db_scores))]
+            k_calinski = zakres_k[int(np.argmax(calinski))]
+
+            st.info(
+                f"**Sugerowane K:** "
+                f"Elbow → **{k_elbow}** | "
+                f"Silhouette → **{k_silhouette}** | "
+                f"Davies-Bouldin → **{k_db}** | "
+                f"Calinski-Harabasz → **{k_calinski}**"
+            )
+
+            from plotly.subplots import make_subplots as make_sp
+
+            fig_k = make_sp(
+                rows=2, cols=2,
+                subplot_titles=[
+                    "Metoda Elbow (Inercja KMeans) — szukaj zgięcia",
+                    "Silhouette Score — im wyższy tym lepszy",
+                    "Davies-Bouldin Score — im niższy tym lepszy",
+                    "Calinski-Harabasz Score — im wyższy tym lepszy"
+                ]
+            )
+
+            kolor_linia = "#1f77b4"
+            kolor_marker = "#d62728"
+
+            # Elbow
+            fig_k.add_trace(go.Scatter(
+                x=zakres_k, y=inercje, mode="lines+markers",
+                line=dict(color=kolor_linia, width=2),
+                marker=dict(color=[kolor_marker if k == k_elbow else kolor_linia for k in zakres_k], size=8),
+                hovertemplate="K=%{x}<br>Inercja=%{y:.1f}<extra></extra>"
+            ), row=1, col=1)
+
+            # Silhouette
+            fig_k.add_trace(go.Scatter(
+                x=zakres_k, y=silhouettes, mode="lines+markers",
+                line=dict(color="#2ca02c", width=2),
+                marker=dict(color=[kolor_marker if k == k_silhouette else "#2ca02c" for k in zakres_k], size=8),
+                hovertemplate="K=%{x}<br>Silhouette=%{y:.4f}<extra></extra>"
+            ), row=1, col=2)
+
+            # Davies-Bouldin
+            fig_k.add_trace(go.Scatter(
+                x=zakres_k, y=db_scores, mode="lines+markers",
+                line=dict(color="#ff7f0e", width=2),
+                marker=dict(color=[kolor_marker if k == k_db else "#ff7f0e" for k in zakres_k], size=8),
+                hovertemplate="K=%{x}<br>DB=%{y:.4f}<extra></extra>"
+            ), row=2, col=1)
+
+            # Calinski-Harabasz
+            fig_k.add_trace(go.Scatter(
+                x=zakres_k, y=calinski, mode="lines+markers",
+                line=dict(color="#9467bd", width=2),
+                marker=dict(color=[kolor_marker if k == k_calinski else "#9467bd" for k in zakres_k], size=8),
+                hovertemplate="K=%{x}<br>CH=%{y:.1f}<extra></extra>"
+            ), row=2, col=2)
+
+            fig_k.update_layout(
+                height=500, showlegend=False,
+                margin=dict(l=10, r=10, t=40, b=10),
+            )
+            fig_k.update_xaxes(title_text="Liczba klastrów K", dtick=1)
+            st.plotly_chart(fig_k, use_container_width=True)
+            st.caption(
+                "🔴 Czerwony punkt = sugerowane K dla danej metody. "
+                "Jeśli metody wskazują różne K, wybierz wartość powtarzającą się najczęściej lub tę, "
+                "która najlepiej odpowiada wiedzy dziedzinowej."
+            )
 
         with st.expander("Kompleksowy Opis Metodologiczny", expanded=True):
                 c_d1, c_d2 = st.columns(2)
