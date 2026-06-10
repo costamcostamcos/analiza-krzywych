@@ -224,7 +224,9 @@ def augmentuj_sygnal(krzywe_df, technika, sila, n_kopii, random_state=42):
     return df_aug, etykiety_zrodlowe
 
 
-def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3, df_sygnaly_raw=None):
+@st.cache_data(show_spinner=False)
+def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3, _df_sygnaly_raw=None):
+    df_sygnaly_raw = _df_sygnaly_raw
     if nazwa_metody == "K-means":
         return KMeans(n_clusters=k_grup, random_state=42, n_init=5).fit_predict(dane) + 1
 
@@ -740,7 +742,7 @@ if df is not None:
         if optymalizacja == "Augmentacja sygnału":
             numery_grup_aug = uruchom_silnik_klastrowania(
                 metoda, dane_do_algorytmu, liczba_grup, liczba_grup,
-                df_sygnaly_raw=krzywe_aug
+                _df_sygnaly_raw=krzywe_aug
             )
             # Wyniki dla całego zbioru (do wykresów)
             numery_grup = numery_grup_aug
@@ -754,7 +756,7 @@ if df is not None:
             nazwy_do_wykresu = nazwy_krzywych
             numery_grup_do_wykresu = numery_grup_oryg
         else:
-            numery_grup = uruchom_silnik_klastrowania(metoda, dane_do_algorytmu, liczba_grup, liczba_grup, df_sygnaly_raw=krzywe)
+            numery_grup = uruchom_silnik_klastrowania(metoda, dane_do_algorytmu, liczba_grup, liczba_grup, _df_sygnaly_raw=krzywe)
             ari_score = adjusted_rand_score(etykiety_eksperta, numery_grup) * 100
             nmi_score = normalized_mutual_info_score(etykiety_eksperta, numery_grup) * 100
             krzywe_do_wykresu = krzywe
@@ -948,81 +950,108 @@ if df is not None:
             st.write("---")
 
         # =================================================================
-        # SILNIK DIAGNOSTYCZNY: LEAVE-ONE-OUT (ANALIZA WPŁYWU)
+        # MSE ANOMALY DETECTION — odległość krzywej od centroidu klastra
         # =================================================================
-        with st.expander("🔍 Silnik Diagnostyczny AI: Znajdź anomalie psujące wynik", expanded=True):
-            st.markdown("Algorytm izoluje po kolei każdą krzywą z bazy danych, uruchamia grupowanie od nowa i bada, jak jej brak wpływa na globalny wskaźnik ARI.")
+        with st.expander("🔍 Detekcja Anomalii MSE: Odległość od centroidu klastra", expanded=True):
+            st.markdown(
+                "Dla każdej krzywej obliczana jest **fizyczna odległość MSE** od wzorca (centroidu) "
+                "jej klastra. Krzywe z MSE powyżej progu `μ + 2σ` są automatycznie oznaczane jako anomalie."
+            )
 
-            wyniki_loo = []
-            # LOO zawsze na oryginalnych krzywych
-            dane_loo = StandardScaler().fit_transform(krzywe_do_wykresu.T)
-            N_samples_loo = dane_loo.shape[0]
+            dane_mse = StandardScaler().fit_transform(krzywe_do_wykresu.T)
+            wyniki_mse = []
 
-            for odrzucona_idx in range(N_samples_loo):
-                maska = np.ones(N_samples_loo, dtype=bool)
-                maska[odrzucona_idx] = False
+            unikalne_k = sorted(set(numery_grup_do_wykresu))
+            for k_id in unikalne_k:
+                if k_id == 0:
+                    continue  # pomijamy szum HDBSCAN
+                maska_k = np.array(numery_grup_do_wykresu) == k_id
+                dane_klastra = dane_mse[maska_k]
+                centroid = dane_klastra.mean(axis=0)
+                for i, (nalezy, col) in enumerate(zip(maska_k, krzywe_do_wykresu.columns)):
+                    if nalezy:
+                        mse = float(np.mean((dane_mse[i] - centroid) ** 2))
+                        wyniki_mse.append({
+                            "Krzywa": str(col),
+                            "Klaster": k_id,
+                            "MSE od centroidu": round(mse, 4)
+                        })
 
-                dane_sub = dane_loo[maska]
-                etykiety_eksperta_sub = [etykiety_eksperta[idx] for idx in range(N_samples_loo) if maska[idx]]
+            df_mse = pd.DataFrame(wyniki_mse)
+            if not df_mse.empty:
+                prog_anomalii = df_mse["MSE od centroidu"].mean() + 2 * df_mse["MSE od centroidu"].std()
+                df_mse["Anomalia"] = df_mse["MSE od centroidu"].apply(
+                    lambda v: "🚨 TAK" if v > prog_anomalii else "✅ NIE"
+                )
+                df_mse_sorted = df_mse.sort_values("MSE od centroidu", ascending=False).reset_index(drop=True)
 
-                if "Filtrowanie szumów (Rolling Mean) + Hierarchiczna" in metoda:
-                    krzywe_sub = krzywe_do_wykresu.iloc[:, maska]
-                else:
-                    krzywe_sub = krzywe_do_wykresu
+                col_mse1, col_mse2 = st.columns(2)
+                with col_mse1:
+                    st.markdown("##### 🚨 Anomalie (MSE > μ + 2σ):")
+                    anomalie = df_mse_sorted[df_mse_sorted["Anomalia"] == "🚨 TAK"].reset_index(drop=True)
+                    if not anomalie.empty:
+                        st.dataframe(
+                            anomalie[["Krzywa", "Klaster", "MSE od centroidu"]].style.format(
+                                {"MSE od centroidu": "{:.4f}"}
+                            ).background_gradient(subset=["MSE od centroidu"], cmap="Reds"),
+                            hide_index=True, use_container_width=True
+                        )
+                        st.caption(f"Próg anomalii: {prog_anomalii:.4f}  |  Wykryto: {len(anomalie)} krzywych")
+                    else:
+                        st.success("Brak anomalii — wszystkie krzywe leżą blisko centroidów klastrów.")
 
-                pred_sub = uruchom_silnik_klastrowania(metoda, dane_sub, liczba_grup, liczba_grup, df_sygnaly_raw=krzywe_sub)
-                sub_ari = adjusted_rand_score(etykiety_eksperta_sub, pred_sub) * 100
-                wplyw = sub_ari - ari_score
-
-                wyniki_loo.append({
-                    "Odrzucona Krzywa": str(nazwy_do_wykresu[odrzucona_idx]),
-                    "Nowe ARI po usunięciu (%)": round(sub_ari, 2),
-                    "Wpływ na model": round(wplyw, 2)
-                })
-
-            df_loo = pd.DataFrame(wyniki_loo).sort_values(by="Wpływ na model", ascending=False).reset_index(drop=True)
-
-            col_loo1, col_loo2 = st.columns(2)
-            with col_loo1:
-                st.markdown('##### 🚨 "Czarne Owce" (Usunięcie tych krzywych PODNOSI wynik):')
-                df_czarne = df_loo[df_loo["Wpływ na model"] > 0.01].reset_index(drop=True)
-                if not df_czarne.empty:
-                    st.dataframe(df_czarne.style.format({"Wpływ na model": "+{:.2f}%"}), width="stretch", hide_index=True)
-                else:
-                    st.info("Brak wyraźnych anomalii psujących wynik. Wszystkie krzywe wspierają model.")
-
-            with col_loo2:
-                st.markdown('##### 🧱 "Filary Modelu" (Usunięcie tych krzywych drastycznie OBNIŻA wynik):')
-                df_filary = df_loo[df_loo["Wpływ na model"] < -0.01].sort_values(by="Wpływ na model", ascending=True).reset_index(drop=True)
-                if not df_filary.empty:
-                    st.dataframe(df_filary.style.format({"Wpływ na model": "{:.2f}%"}), width="stretch", hide_index=True)
-                else:
-                    st.info("Brak kluczowych filarów — podział grup jest stabilny rozproszony.")
+                with col_mse2:
+                    st.markdown("##### 📊 Ranking MSE wszystkich krzywych:")
+                    st.dataframe(
+                        df_mse_sorted[["Krzywa", "Klaster", "MSE od centroidu", "Anomalia"]].style.format(
+                            {"MSE od centroidu": "{:.4f}"}
+                        ),
+                        hide_index=True, use_container_width=True, height=320
+                    )
 
         # =================================================================
-        # AUTOMATYCZNY RANKING METOD (TURNIEJ AI - ZABEZPIECZONY)
+        # AUTOMATYCZNY RANKING METOD — silhouette_score + ARI + NMI
         # =================================================================
         st.write("---")
         st.subheader("Ranking Skuteczności Algorytmów")
 
-        rekordy_rankingu = []
-        for m_nazwa in lista_metod:
-            try:
-                pred_etykiety = uruchom_silnik_klastrowania(m_nazwa, dane_do_algorytmu, liczba_grup, liczba_grup, df_sygnaly_raw=krzywe)
-                m_ari = adjusted_rand_score(etykiety_eksperta, pred_etykiety) * 100
-                m_nmi = normalized_mutual_info_score(etykiety_eksperta, pred_etykiety) * 100
-                rekordy_rankingu.append({
-                    "Algorytm AI": m_nazwa,
-                    "Zgodność ARI (%)": round(m_ari, 2),
-                    "Zbieżność Informacji NMI (%)": round(m_nmi, 2),
-                    "Średnia Skuteczność (%)": round((m_ari + m_nmi) / 2, 2)
-                })
-            except Exception:
-                pass
+        @st.cache_data(show_spinner=False)
+        def oblicz_ranking(_dane, _etykiety_eksperta, _krzywe, lista_metod, liczba_grup, _metoda_glowna):
+            """Cached: przelicza się tylko gdy zmienią się dane wejściowe lub parametry."""
+            rekordy = []
+            for m_nazwa in lista_metod:
+                try:
+                    pred = uruchom_silnik_klastrowania(m_nazwa, _dane, liczba_grup, liczba_grup, _df_sygnaly_raw=_krzywe)
+                    unikalne = np.unique(pred[pred > 0]) if 0 in pred else np.unique(pred)
+                    if len(unikalne) < 2:
+                        raise ValueError("Za mało klastrów do silhouette")
+                    m_ari = adjusted_rand_score(_etykiety_eksperta, pred) * 100
+                    m_nmi = normalized_mutual_info_score(_etykiety_eksperta, pred) * 100
+                    # silhouette tylko dla punktów nie będących szumem
+                    maska_nie_szum = pred > 0
+                    if maska_nie_szum.sum() >= 2 and len(np.unique(pred[maska_nie_szum])) >= 2:
+                        m_sil = silhouette_score(_dane[maska_nie_szum], pred[maska_nie_szum]) * 100
+                    else:
+                        m_sil = silhouette_score(_dane, pred) * 100
+                    rekordy.append({
+                        "Algorytm AI": m_nazwa,
+                        "ARI (%)": round(m_ari, 2),
+                        "NMI (%)": round(m_nmi, 2),
+                        "Silhouette (%)": round(m_sil, 2),
+                        "Średnia (ARI+NMI+Sil) (%)": round((m_ari + m_nmi + m_sil) / 3, 2)
+                    })
+                except Exception:
+                    pass
+            return rekordy
+
+        rekordy_rankingu = oblicz_ranking(
+            dane_do_algorytmu, etykiety_eksperta, krzywe,
+            lista_metod, liczba_grup, metoda
+        )
 
         if len(rekordy_rankingu) > 0:
             df_leaderboard = pd.DataFrame(rekordy_rankingu).sort_values(
-                by="Średnia Skuteczność (%)", ascending=False
+                by="Średnia (ARI+NMI+Sil) (%)", ascending=False
             ).reset_index(drop=True)
             df_leaderboard.index += 1
             st.table(df_leaderboard)
