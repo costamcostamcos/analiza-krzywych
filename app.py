@@ -56,6 +56,24 @@
 #     (k-NN ważone odległością lub najbliższy centroid), z pewnością
 #     przypisania, wykresem nakładkowym i eksportem CSV. Bez Ground Truth
 #     klasyfikacja odbywa się do klastrów z bieżącej analizy.
+#
+# [WERSJA 2.3]
+# 19. NAPRAWIONO płaskie linie nowych widm: np.interp wymaga rosnącej osi X,
+#     a widma EPR mają ją często malejącą (od wysokiego pola do niskiego) lub
+#     nieposortowaną — bez sortowania interpolacja zwracała wartości stałe
+#     (płaskie kreski) zamiast kształtu widma. Teraz oś X nowych i
+#     referencyjnych widm jest sortowana rosnąco przed interpolacją, z
+#     ostrzeżeniem, gdy zakresy X się nie pokrywają.
+#
+# [WERSJA 2.4]
+# 20. Trzecia metoda oceny przypisania: "Skalibrowane prawdopodobieństwo"
+#     (SVM RBF + kalibracja Platta z walidacją krzyżową, CalibratedClassifierCV).
+#     W odróżnieniu od k-NN (zgodność głosów) i centroidu (margines separacji),
+#     zwraca przybliżenie rzeczywistego P(kategoria|widmo). Liczba foldów CV
+#     dobierana automatycznie do najmniejszej kategorii; ostrzeżenie przy
+#     małych zbiorach. Kolumna pewności i jej opis są teraz zależne od metody
+#     (uczciwe nazwy: "Prawdopodobieństwo (%)", "Zgodność głosów (%)",
+#     "Margines separacji") zamiast mylącego wspólnego "Pewność (%)".
 # =====================================================================
 
 import io
@@ -75,6 +93,9 @@ from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
 from sklearn.decomposition import NMF, PCA
 from sklearn.manifold import SpectralEmbedding
 from sklearn.neighbors import KNeighborsClassifier, NearestCentroid
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.svm import SVC
+from collections import Counter
 from sklearn.metrics import (
     silhouette_score,
     adjusted_rand_score,
@@ -1412,19 +1433,56 @@ try:
                     st.error("W pliku nie znaleziono kolumn z widmami "
                              "(poza kolumną osi X).")
                 else:
-                    x_ref = np.asarray(x, dtype=float)
+                    x_ref_raw = np.asarray(x, dtype=float)
+                    # np.interp interpoluje NA x_ref — jeśli referencyjna oś jest
+                    # malejąca (typowe dla EPR), sortujemy ją rosnąco wraz z
+                    # profilami wzorcowymi, by uniknąć zniekształceń.
+                    if x_ref_raw[0] > x_ref_raw[-1]:
+                        kol_ref = np.argsort(x_ref_raw)
+                        x_ref = x_ref_raw[kol_ref]
+                    else:
+                        kol_ref = np.arange(len(x_ref_raw))
+                        x_ref = x_ref_raw
 
-                    # Interpolacja na siatkę referencyjną, gdy osie X się różnią
-                    if (len(x_nowe) != len(x_ref)
-                            or not np.allclose(x_nowe, x_ref)):
+                    # Interpolacja na siatkę referencyjną, gdy osie X się różnią.
+                    # np.interp WYMAGA rosnącego xp — widma EPR często mają oś X
+                    # malejącą (od wysokiego pola do niskiego) lub nieposortowaną,
+                    # co bez sortowania dawało płaskie (stałe) linie zamiast widm.
+                    trzeba_interpolowac = (
+                        len(x_nowe) != len(x_ref)
+                        or not np.allclose(x_nowe, x_ref)
+                    )
+
+                    if trzeba_interpolowac:
+                        # Ostrzeżenie, gdy zakresy X się nie pokrywają — poza
+                        # zakresem np.interp zwraca wartości brzegowe (płaskie).
+                        if (x_nowe.min() > x_ref.max()
+                                or x_nowe.max() < x_ref.min()):
+                            st.error(
+                                "Zakres osi X nowych widm nie pokrywa się z "
+                                "referencyjnym — interpolacja niemożliwa. "
+                                f"Nowe: [{x_nowe.min():.4g}, {x_nowe.max():.4g}], "
+                                f"referencyjne: [{x_ref.min():.4g}, "
+                                f"{x_ref.max():.4g}]. Sprawdź jednostki osi X."
+                            )
+                            st.stop()
+
+                        # Posortuj oś X nowych widm rosnąco (i przestaw widma)
+                        kolejnosc = np.argsort(x_nowe)
+                        x_nowe_sort = x_nowe[kolejnosc]
+
                         st.info(
-                            f"Oś X nowych widm ({len(x_nowe)} pkt) różni się od "
-                            f"referencyjnej ({len(x_ref)} pkt) — zastosowano "
+                            f"Oś X nowych widm ({len(x_nowe)} pkt, zakres "
+                            f"[{x_nowe.min():.4g}, {x_nowe.max():.4g}]) różni się "
+                            f"od referencyjnej ({len(x_ref)} pkt) — zastosowano "
                             f"interpolację liniową na siatkę wzorcową."
                         )
                         macierz_nowe = np.column_stack([
-                            np.interp(x_ref, x_nowe,
-                                      widma_nowe[c].values.astype(float))
+                            np.interp(
+                                x_ref,
+                                x_nowe_sort,
+                                widma_nowe[c].values.astype(float)[kolejnosc],
+                            )
                             for c in widma_nowe.columns
                         ])
                     else:
@@ -1436,8 +1494,9 @@ try:
                     metoda_klasyfikacji = st.radio(
                         "Metoda przypisania:",
                         ["k-NN (k=3, ważone odległością)",
-                         "Najbliższy centroid kategorii"],
-                        horizontal=True, key="radio_klasyfikacja",
+                         "Najbliższy centroid kategorii",
+                         "Skalibrowane prawdopodobieństwo (SVM + kalibracja)"],
+                        horizontal=False, key="radio_klasyfikacja",
                     )
 
                     if "k-NN" in metoda_klasyfikacji:
@@ -1449,9 +1508,59 @@ try:
                         przypisania = model_kl.predict(dane_nowe_std)
                         proby = model_kl.predict_proba(dane_nowe_std)
                         pewnosci = proby.max(axis=1) * 100
-                        opis_pewnosci = ("Pewność = udział głosów (ważonych "
-                                         "odległością) zwycięskiej kategorii "
-                                         "wśród k=3 najbliższych widm wzorcowych.")
+                        opis_pewnosci = ("Zgodność głosów = udział głosów "
+                                         "(ważonych odległością) zwycięskiej "
+                                         "kategorii wśród k=3 najbliższych widm "
+                                         "wzorcowych. To NIE jest kalibrowane "
+                                         "prawdopodobieństwo.")
+                        nazwa_kol_pewnosci = "Zgodność głosów (%)"
+
+                    elif "Skalibrowane" in metoda_klasyfikacji:
+                        # Skalibrowany klasyfikator probabilistyczny.
+                        # Liczba foldów CV nie może przekroczyć liczności
+                        # najmniejszej kategorii — inaczej kalibracja się wysypie.
+                        licznosci = Counter(klasy_referencyjne)
+                        min_klasa = min(licznosci.values())
+                        n_klas = len(licznosci)
+
+                        if min_klasa < 2 or n_klas < 2:
+                            st.error(
+                                "Kalibracja wymaga co najmniej 2 kategorii i "
+                                "min. 2 widm wzorcowych w każdej. Najmniejsza "
+                                f"kategoria ma tylko {min_klasa} widm(o). "
+                                "Wybierz inną metodę lub dodaj więcej wzorców."
+                            )
+                            st.stop()
+
+                        cv_folds = min(5, min_klasa)
+                        # Bazowy SVM z RBF; sigmoidalna kalibracja Platta jest
+                        # stabilniejsza od izotonicznej przy małych zbiorach.
+                        baza_svm = SVC(kernel="rbf", probability=False,
+                                       random_state=KONFIG["RANDOM_STATE"])
+                        model_kl = CalibratedClassifierCV(
+                            baza_svm, method="sigmoid", cv=cv_folds
+                        )
+                        model_kl.fit(dane_std_oryginaly, klasy_referencyjne)
+                        przypisania = model_kl.predict(dane_nowe_std)
+                        proby = model_kl.predict_proba(dane_nowe_std)
+                        pewnosci = proby.max(axis=1) * 100
+                        opis_pewnosci = (
+                            f"Skalibrowane prawdopodobieństwo (SVM RBF + "
+                            f"kalibracja Platta, {cv_folds}-krotna walidacja "
+                            f"krzyżowa). Wartość przybliża rzeczywiste P(kategoria|"
+                            f"widmo): 90% oznacza, że wśród wielu takich "
+                            f"przypadków ok. 90% powinno należeć do wskazanej "
+                            f"kategorii."
+                        )
+                        nazwa_kol_pewnosci = "Prawdopodobieństwo (%)"
+                        if min_klasa < 5:
+                            st.warning(
+                                f"⚠️ Najmniejsza kategoria ma tylko {min_klasa} "
+                                f"widm — kalibracja oparta na {cv_folds} foldach "
+                                "może być niestabilna. Traktuj prawdopodobieństwa "
+                                "orientacyjnie i zweryfikuj na wykresie."
+                            )
+
                     else:
                         model_kl = NearestCentroid()
                         model_kl.fit(dane_std_oryginaly, klasy_referencyjne)
@@ -1467,14 +1576,17 @@ try:
                                         / (d_sort[:, 1] + 1e-12)) * 100
                         else:
                             pewnosci = np.full(len(przypisania), 100.0)
-                        opis_pewnosci = ("Pewność = margines separacji: jak "
-                                         "bardzo najbliższy centroid wygrywa "
-                                         "z drugim w kolejności (0% = remis).")
+                        opis_pewnosci = ("Margines separacji: jak bardzo "
+                                         "najbliższy centroid wygrywa z drugim w "
+                                         "kolejności (0 = remis, 100 = pełna "
+                                         "dominacja). To wskaźnik zaufania, NIE "
+                                         "prawdopodobieństwo.")
+                        nazwa_kol_pewnosci = "Margines separacji"
 
                     df_wyniki_kl = pd.DataFrame({
                         "Nowe widmo": nazwy_nowe,
                         "Przypisana kategoria": [str(p) for p in przypisania],
-                        "Pewność (%)": np.round(pewnosci, 1),
+                        nazwa_kol_pewnosci: np.round(pewnosci, 1),
                     })
 
                     col_kl1, col_kl2 = st.columns([2, 3])
@@ -1482,17 +1594,17 @@ try:
                         st.markdown("##### 📋 Wyniki przypisania:")
                         st.dataframe(
                             df_wyniki_kl.style
-                            .format({"Pewność (%)": "{:.1f}"})
-                            .background_gradient(subset=["Pewność (%)"],
+                            .format({nazwa_kol_pewnosci: "{:.1f}"})
+                            .background_gradient(subset=[nazwa_kol_pewnosci],
                                                  cmap="RdYlGn",
                                                  vmin=0, vmax=100),
                             hide_index=True, use_container_width=True,
                         )
                         st.caption(opis_pewnosci)
-                        niskie = df_wyniki_kl[df_wyniki_kl["Pewność (%)"] < 50]
+                        niskie = df_wyniki_kl[df_wyniki_kl[nazwa_kol_pewnosci] < 50]
                         if not niskie.empty:
                             st.warning(
-                                f"⚠️ {len(niskie)} widm(o) z pewnością < 50% — "
+                                f"⚠️ {len(niskie)} widm(o) z wartością < 50 — "
                                 "przypisanie niepewne, zweryfikuj wzrokowo "
                                 "na wykresie obok."
                             )
@@ -1518,9 +1630,9 @@ try:
                         # Grube linie: średnie profile kategorii wzorcowych
                         for kat in unikalne_kategorie:
                             maska_kat = [kr == kat for kr in klasy_referencyjne]
-                            profil_kat = krzywe.iloc[:, maska_kat].mean(axis=1)
+                            profil_kat = krzywe.iloc[:, maska_kat].mean(axis=1).values
                             fig_kl.add_trace(go.Scatter(
-                                x=x_ref, y=profil_kat, mode="lines",
+                                x=x_ref, y=profil_kat[kol_ref], mode="lines",
                                 name=f"Wzorzec: {kat}",
                                 legendgroup=f"wzorzec_{kat}",
                                 line=dict(color=mapa_kolorow[kat], width=3),
