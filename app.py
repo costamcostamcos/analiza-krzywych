@@ -47,6 +47,15 @@
 #     także Wykres 2 (profile modelowe), szczegółowy skład klastrów oraz
 #     eksport CSV/Excel — wcześniej sekcje te były dla nich ukryte, mimo że
 #     przypisania z fcluster() były liczone (służyły do ARI/NMI).
+#
+# [WERSJA 2.2]
+# 18. Nowa sekcja "Klasyfikacja nowych widm": drugi uploader przyjmuje
+#     skoroszyt Excel z nowymi widmami (ten sam układ: X + kolumny widm),
+#     interpoluje je na siatkę referencyjną, standaryzuje TYM SAMYM
+#     skalerem co dane wzorcowe i przypisuje do kategorii eksperckich
+#     (k-NN ważone odległością lub najbliższy centroid), z pewnością
+#     przypisania, wykresem nakładkowym i eksportem CSV. Bez Ground Truth
+#     klasyfikacja odbywa się do klastrów z bieżącej analizy.
 # =====================================================================
 
 import io
@@ -65,6 +74,7 @@ from sklearn.cluster import KMeans, HDBSCAN, SpectralClustering
 from sklearn.mixture import GaussianMixture, BayesianGaussianMixture
 from sklearn.decomposition import NMF, PCA
 from sklearn.manifold import SpectralEmbedding
+from sklearn.neighbors import KNeighborsClassifier, NearestCentroid
 from sklearn.metrics import (
     silhouette_score,
     adjusted_rand_score,
@@ -941,8 +951,11 @@ try:
 
     # =================================================================
     # WSPÓŁDZIELONA STANDARYZACJA (liczona raz — POPRAWKA #11)
+    # Skaler jest zachowany, żeby TĄ SAMĄ transformacją objąć nowe widma
+    # w sekcji klasyfikacji (WERSJA 2.2).
     # =================================================================
-    dane_std_oryginaly = StandardScaler().fit_transform(krzywe.T)
+    skaler_referencyjny = StandardScaler().fit(krzywe.T)
+    dane_std_oryginaly = skaler_referencyjny.transform(krzywe.T)
 
     # =================================================================
     # SUGESTIA LICZBY KLASTRÓW (K)
@@ -1352,6 +1365,195 @@ try:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
             )
+
+    # =================================================================
+    # KLASYFIKACJA NOWYCH WIDM DO KATEGORII WZORCOWYCH (WERSJA 2.2)
+    # =================================================================
+    with st.expander("🆕 Klasyfikacja nowych widm do kategorii wzorcowych",
+                     expanded=False):
+        # Źródło kategorii: podział ekspercki, a bez niego — bieżące klastry
+        if gt_dostepny:
+            klasy_referencyjne = [str(e) for e in etykiety_eksperta]
+            zrodlo_klas = "kategorie eksperckie (Ground Truth / panel boczny)"
+        else:
+            klasy_referencyjne = [
+                f"Klaster {int(v)}" if int(v) > 0 else "Szum"
+                for v in numery_grup_do_wykresu
+            ]
+            zrodlo_klas = "klastry z bieżącej analizy (brak Ground Truth)"
+
+        st.markdown(
+            "Wgraj **osobny skoroszyt Excel** z nowymi widmami w tym samym "
+            "układzie co dane główne: pierwsza kolumna = oś X, kolejne kolumny "
+            "= widma. Każde nowe widmo zostanie przypisane do jednej z "
+            f"kategorii wzorcowych. Źródło kategorii: **{zrodlo_klas}**."
+        )
+        st.caption(
+            "Klasyfikacja działa w przestrzeni standaryzowanych surowych "
+            "krzywych (ten sam skaler co dane wzorcowe), niezależnie od "
+            "wybranej obróbki wstępnej. Jeśli oś X nowych widm różni się od "
+            "referencyjnej, widma są interpolowane liniowo na siatkę wzorcową."
+        )
+
+        plik_nowe = st.file_uploader(
+            "Wgraj plik z nowymi widmami (.xlsx)",
+            type=["xlsx"], key="uploader_nowe_widma",
+        )
+
+        if plik_nowe is not None:
+            try:
+                df_nowe_raw = pd.read_excel(plik_nowe, sheet_name=0, header=None)
+                df_nowe = inteligentne_pobranie_tabeli(df_nowe_raw)
+                x_nowe = df_nowe.iloc[:, 0].values.astype(float)
+                widma_nowe = df_nowe.iloc[:, 1:]
+                nazwy_nowe = [str(c) for c in widma_nowe.columns]
+
+                if widma_nowe.shape[1] == 0:
+                    st.error("W pliku nie znaleziono kolumn z widmami "
+                             "(poza kolumną osi X).")
+                else:
+                    x_ref = np.asarray(x, dtype=float)
+
+                    # Interpolacja na siatkę referencyjną, gdy osie X się różnią
+                    if (len(x_nowe) != len(x_ref)
+                            or not np.allclose(x_nowe, x_ref)):
+                        st.info(
+                            f"Oś X nowych widm ({len(x_nowe)} pkt) różni się od "
+                            f"referencyjnej ({len(x_ref)} pkt) — zastosowano "
+                            f"interpolację liniową na siatkę wzorcową."
+                        )
+                        macierz_nowe = np.column_stack([
+                            np.interp(x_ref, x_nowe,
+                                      widma_nowe[c].values.astype(float))
+                            for c in widma_nowe.columns
+                        ])
+                    else:
+                        macierz_nowe = widma_nowe.values.astype(float)
+
+                    # TEN SAM skaler co dane wzorcowe — kluczowe dla spójności
+                    dane_nowe_std = skaler_referencyjny.transform(macierz_nowe.T)
+
+                    metoda_klasyfikacji = st.radio(
+                        "Metoda przypisania:",
+                        ["k-NN (k=3, ważone odległością)",
+                         "Najbliższy centroid kategorii"],
+                        horizontal=True, key="radio_klasyfikacja",
+                    )
+
+                    if "k-NN" in metoda_klasyfikacji:
+                        k_snn = min(3, n_krzywych)
+                        model_kl = KNeighborsClassifier(
+                            n_neighbors=k_snn, weights="distance"
+                        )
+                        model_kl.fit(dane_std_oryginaly, klasy_referencyjne)
+                        przypisania = model_kl.predict(dane_nowe_std)
+                        proby = model_kl.predict_proba(dane_nowe_std)
+                        pewnosci = proby.max(axis=1) * 100
+                        opis_pewnosci = ("Pewność = udział głosów (ważonych "
+                                         "odległością) zwycięskiej kategorii "
+                                         "wśród k=3 najbliższych widm wzorcowych.")
+                    else:
+                        model_kl = NearestCentroid()
+                        model_kl.fit(dane_std_oryginaly, klasy_referencyjne)
+                        przypisania = model_kl.predict(dane_nowe_std)
+                        centroidy = model_kl.centroids_
+                        d = np.linalg.norm(
+                            dane_nowe_std[:, None, :] - centroidy[None, :, :],
+                            axis=2,
+                        )
+                        d_sort = np.sort(d, axis=1)
+                        if d_sort.shape[1] >= 2:
+                            pewnosci = (1.0 - d_sort[:, 0]
+                                        / (d_sort[:, 1] + 1e-12)) * 100
+                        else:
+                            pewnosci = np.full(len(przypisania), 100.0)
+                        opis_pewnosci = ("Pewność = margines separacji: jak "
+                                         "bardzo najbliższy centroid wygrywa "
+                                         "z drugim w kolejności (0% = remis).")
+
+                    df_wyniki_kl = pd.DataFrame({
+                        "Nowe widmo": nazwy_nowe,
+                        "Przypisana kategoria": [str(p) for p in przypisania],
+                        "Pewność (%)": np.round(pewnosci, 1),
+                    })
+
+                    col_kl1, col_kl2 = st.columns([2, 3])
+                    with col_kl1:
+                        st.markdown("##### 📋 Wyniki przypisania:")
+                        st.dataframe(
+                            df_wyniki_kl.style
+                            .format({"Pewność (%)": "{:.1f}"})
+                            .background_gradient(subset=["Pewność (%)"],
+                                                 cmap="RdYlGn",
+                                                 vmin=0, vmax=100),
+                            hide_index=True, use_container_width=True,
+                        )
+                        st.caption(opis_pewnosci)
+                        niskie = df_wyniki_kl[df_wyniki_kl["Pewność (%)"] < 50]
+                        if not niskie.empty:
+                            st.warning(
+                                f"⚠️ {len(niskie)} widm(o) z pewnością < 50% — "
+                                "przypisanie niepewne, zweryfikuj wzrokowo "
+                                "na wykresie obok."
+                            )
+                        csv_kl = df_wyniki_kl.to_csv(
+                            index=False, encoding="utf-8-sig"
+                        ).encode("utf-8-sig")
+                        st.download_button(
+                            "⬇️ Pobierz przypisania (CSV)",
+                            data=csv_kl,
+                            file_name="klasyfikacja_nowych_widm.csv",
+                            mime="text/csv",
+                            use_container_width=True,
+                        )
+
+                    with col_kl2:
+                        st.markdown("##### 📈 Nowe widma na tle wzorców kategorii:")
+                        unikalne_kategorie = sorted(set(klasy_referencyjne))
+                        mapa_kolorow = {
+                            kat: PLOTLY_KOLORY[i % 10]
+                            for i, kat in enumerate(unikalne_kategorie)
+                        }
+                        fig_kl = go.Figure()
+                        # Grube linie: średnie profile kategorii wzorcowych
+                        for kat in unikalne_kategorie:
+                            maska_kat = [kr == kat for kr in klasy_referencyjne]
+                            profil_kat = krzywe.iloc[:, maska_kat].mean(axis=1)
+                            fig_kl.add_trace(go.Scatter(
+                                x=x_ref, y=profil_kat, mode="lines",
+                                name=f"Wzorzec: {kat}",
+                                legendgroup=f"wzorzec_{kat}",
+                                line=dict(color=mapa_kolorow[kat], width=3),
+                            ))
+                        # Przerywane linie: nowe widma w kolorze przypisania
+                        for j, nazwa in enumerate(nazwy_nowe):
+                            kat_j = str(przypisania[j])
+                            fig_kl.add_trace(go.Scatter(
+                                x=x_ref, y=macierz_nowe[:, j], mode="lines",
+                                name=f"{nazwa} → {kat_j}",
+                                line=dict(color=mapa_kolorow.get(kat_j, "#aaaaaa"),
+                                          width=1.5, dash="dash"),
+                                opacity=0.85,
+                                hovertemplate=(
+                                    f"<b>{nazwa}</b> → {kat_j} "
+                                    f"({pewnosci[j]:.0f}%)<br>"
+                                    "X: %{x}<br>Y: %{y:.4f}<extra></extra>"
+                                ),
+                            ))
+                        fig_kl.update_layout(
+                            height=420,
+                            margin=dict(l=10, r=10, t=10, b=10),
+                            legend=dict(bgcolor="rgba(255,255,255,0.8)",
+                                        borderwidth=1),
+                            xaxis=dict(showgrid=True, gridcolor="#e0e0e0"),
+                            yaxis=dict(showgrid=True, gridcolor="#e0e0e0"),
+                            hovermode="closest",
+                        )
+                        st.plotly_chart(fig_kl, use_container_width=True)
+
+            except Exception as blad_kl:
+                st.error(f"Nie udało się przetworzyć pliku z nowymi widmami: "
+                         f"{blad_kl}")
 
     # =================================================================
     # MSE ANOMALY DETECTION
