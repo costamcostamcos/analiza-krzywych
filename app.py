@@ -1,6 +1,19 @@
 # =====================================================================
-# INTERAKTYWNY ANALIZATOR KRZYWYCH AI PRO — WERSJA 2 (refaktoryzacja)
+# INTERAKTYWNY ANALIZATOR KRZYWYCH AI PRO — WERSJA 3
 # =====================================================================
+# NOWE W WERSJI 3:
+#  A. Ujednolicenie osi X: widma wzorcowe i nowe przechodzą przez TĘ SAMĄ
+#     funkcję (sortowanie rosnące + interpolacja na wspólną siatkę). Dzięki
+#     temu wgranie tego samego pliku jako „nowe” daje self-match = 0, a k-NN
+#     wiernie odtwarza podział ekspercki. Dodano listę „uciekinierów”
+#     (widm, których przypisanie różni się od etykiety eksperckiej).
+#  B. Nazwy klastrów literami grup eksperckich (a → „Klaster A”) przez
+#     OPTYMALNE przypisanie (algorytm węgierski) + procent czystości.
+#     Klastry nadmiarowe: „Klaster N (mieszany)”. Bez Ground Truth pozostają
+#     nazwy numeryczne.
+#  C. Eksport wykresów do Excela (matplotlib → PNG 300 DPI, osadzone w
+#     arkuszu „Wykresy”): krzywe wg klastrów, profile modelowe, dendrogram.
+#
 # CHANGELOG względem wersji pierwotnej:
 #
 # [BŁĘDY]
@@ -105,6 +118,8 @@ from sklearn.metrics import (
 )
 from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
 from scipy.spatial.distance import squareform
+from scipy.optimize import linear_sum_assignment
+from openpyxl.drawing.image import Image as XLImage
 
 # --- Bezpieczne importy opcjonalnych zależności ---
 try:
@@ -149,6 +164,186 @@ NAZWY_KOLOROW = [
     "Niebieski", "Pomarańczowy", "Zielony", "Czerwony", "Fioletowy",
     "Brązowy", "Różowy", "Szary", "Oliwkowy", "Jasnoniebieski",
 ]
+
+
+# =====================================================================
+# UJEDNOLICENIE OSI X (wspólna siatka rosnąca)
+# Ta sama transformacja stosowana do widm wzorcowych ORAZ nowych,
+# aby identyczne wejście dawało identyczną reprezentację liczbową.
+# Zwraca: (x_ref_rosnace, funkcja_przygotuj(macierz_widm, x_widm)).
+# =====================================================================
+def zbuduj_ujednolicacz_osi(x_ref_raw):
+    """Buduje wspólny „ujednolicacz” osi X w oparciu o oś referencyjną.
+
+    Oś referencyjna jest sortowana rosnąco (widma EPR często mają oś
+    malejącą). Zwrócona funkcja przygotowuje DOWOLNĄ macierz widm
+    (wiersze = punkty osi X, kolumny = widma) na tę samą rosnącą siatkę:
+    sortuje wejściową oś, interpoluje liniowo na siatkę referencyjną i —
+    jeśli osie są już identyczne — zwraca dane bez zmian (bez interpolacji).
+    """
+    x_ref_raw = np.asarray(x_ref_raw, dtype=float)
+    if x_ref_raw[0] > x_ref_raw[-1]:
+        kol_ref = np.argsort(x_ref_raw)
+        x_ref = x_ref_raw[kol_ref]
+    else:
+        kol_ref = np.arange(len(x_ref_raw))
+        x_ref = x_ref_raw
+
+    def przygotuj(macierz_widm, x_widm):
+        """macierz_widm: (n_punktow, n_widm); x_widm: (n_punktow,).
+        Zwraca (n_widm, n_punktow) na rosnącej siatce referencyjnej."""
+        macierz_widm = np.asarray(macierz_widm, dtype=float)
+        x_widm = np.asarray(x_widm, dtype=float)
+
+        # Ścieżka „bez interpolacji”: identyczna oś (po ewentualnym
+        # posortowaniu referencyjnej) → zero perturbacji numerycznych.
+        if len(x_widm) == len(x_ref) and np.allclose(x_widm, x_ref):
+            return macierz_widm.T.copy()
+
+        # Jeśli to dokładnie oś referencyjna w oryginalnej (malejącej)
+        # kolejności — wystarczy przełożyć wiersze wg kol_ref, bez interpolacji.
+        if len(x_widm) == len(x_ref_raw) and np.allclose(x_widm, x_ref_raw):
+            return macierz_widm[kol_ref, :].T.copy()
+
+        # W pozostałych przypadkach: sortujemy oś wejściową i interpolujemy.
+        kolejnosc = np.argsort(x_widm)
+        x_sort = x_widm[kolejnosc]
+        wynik = np.column_stack([
+            np.interp(x_ref, x_sort, macierz_widm[:, j][kolejnosc])
+            for j in range(macierz_widm.shape[1])
+        ])
+        return wynik.T.copy()
+
+    return x_ref, przygotuj
+
+
+# =====================================================================
+# MAPOWANIE KLASTRÓW NA LITERY GRUP EKSPERCKICH (algorytm węgierski)
+# Klaster, w którym dominują krzywe z eksperckiej grupy „a”, otrzymuje
+# nazwę „Klaster A” itd. Przypisanie jest OPTYMALNE (maksymalizuje
+# łączną liczbę trafnie nazwanych krzywych) i wzajemnie jednoznaczne.
+# =====================================================================
+def mapuj_klastry_na_litery(numery_grup, etykiety_eksperta):
+    """Zwraca słownik: nr_klastra -> (etykieta_wyswietlana, czystosc_%).
+
+    - Litery pochodzą z rzeczywistych etykiet eksperckich (a -> „A”).
+    - Przypisanie klaster→grupa liczone algorytmem węgierskim na macierzy
+      kontyngencji (ile krzywych z grupy g wpadło do klastra k).
+    - Czystość = udział krzywych z przypisanej grupy w danym klastrze.
+    - Klastry bez pary (więcej klastrów niż grup) oraz szum (0) dostają
+      nazwę „Klaster N (mieszany)”.
+    """
+    numery_grup = np.asarray(numery_grup)
+    etykiety_eksperta = np.asarray([str(e) for e in etykiety_eksperta])
+
+    klastry = sorted(int(k) for k in set(numery_grup) if int(k) > 0)
+    grupy = sorted(set(etykiety_eksperta))
+    wynik = {}
+
+    if not klastry or not grupy:
+        for k in sorted(int(v) for v in set(numery_grup)):
+            wynik[k] = (("Szum / Odrzuty" if k == 0 else f"Klaster {k}"), None)
+        return wynik
+
+    # Macierz kontyngencji: wiersze = klastry, kolumny = grupy eksperckie
+    idx_klastra = {k: i for i, k in enumerate(klastry)}
+    idx_grupy = {g: j for j, g in enumerate(grupy)}
+    M = np.zeros((len(klastry), len(grupy)), dtype=float)
+    for kl, gr in zip(numery_grup, etykiety_eksperta):
+        kl = int(kl)
+        if kl > 0:
+            M[idx_klastra[kl], idx_grupy[gr]] += 1
+
+    # Algorytm węgierski maksymalizuje liczbę trafień (minus koszt)
+    wiersze, kolumny = linear_sum_assignment(-M)
+    przypisana_grupa = {}
+    for r, c in zip(wiersze, kolumny):
+        przypisana_grupa[klastry[r]] = grupy[c]
+
+    liczności_klastra = {k: int((numery_grup == k).sum()) for k in klastry}
+    uzyte_litery = {}
+    for k in klastry:
+        if k in przypisana_grupa:
+            g = przypisana_grupa[k]
+            litera = str(g).upper()
+            n_z_grupy = int(M[idx_klastra[k], idx_grupy[g]])
+            czystosc = 100.0 * n_z_grupy / max(liczności_klastra[k], 1)
+            # Zabezpieczenie przed zdublowaną literą (teoretycznie niemożliwe
+            # przy 1:1, ale gdy dwie grupy mają identyczną literę po .upper()).
+            if litera in uzyte_litery:
+                litera = f"{litera}·{k}"
+            uzyte_litery[litera] = k
+            wynik[k] = (f"Klaster {litera}", round(czystosc, 1))
+        else:
+            # Klaster nadmiarowy — brak pary z grupą ekspercką
+            wynik[k] = (f"Klaster {k} (mieszany)", None)
+
+    if 0 in set(int(v) for v in numery_grup):
+        wynik[0] = ("Szum / Odrzuty", None)
+    return wynik
+
+
+# =====================================================================
+# RENDER WYKRESÓW PUBLIKACYJNYCH (matplotlib -> PNG do Excela)
+# Kaleido (Plotly -> PNG) bywa niedostępne na Streamlit Cloud, dlatego
+# wersje do publikacji rysujemy matplotlibem: pewne, wysokie DPI,
+# kontrola czcionek i rozmiaru zgodnie z wymogami czasopism.
+# =====================================================================
+def _png_krzywe(x, krzywe_df, numery_grup, kolory_hex, dpi=300):
+    fig, ax = plt.subplots(figsize=(7.0, 4.2))
+    dodane = set()
+    for i, col in enumerate(krzywe_df.columns):
+        kid = int(numery_grup[i])
+        kolor = "#aaaaaa" if kid <= 0 else kolory_hex[(kid - 1) % 10]
+        etykieta = "Szum" if kid <= 0 else f"Klaster {kid}"
+        ax.plot(x, krzywe_df[col], color=kolor, linewidth=0.9, alpha=0.7,
+                label=etykieta if kid not in dodane else None)
+        dodane.add(kid)
+    ax.set_xlabel("Oś X"); ax.set_ylabel("Sygnał")
+    ax.legend(fontsize=7, framealpha=0.85)
+    ax.grid(True, color="#e0e0e0", linewidth=0.5)
+    fig.tight_layout()
+    buf = io.BytesIO(); fig.savefig(buf, format="png", dpi=dpi)
+    plt.close(fig); buf.seek(0)
+    return buf
+
+
+def _png_profile(x, krzywe_df, numery_grup, kolory_hex, dpi=300):
+    fig, ax = plt.subplots(figsize=(7.0, 4.2))
+    for kid in sorted(set(int(v) for v in numery_grup)):
+        maska = [int(numery_grup[i]) == kid for i in range(len(numery_grup))]
+        sub = krzywe_df.iloc[:, maska]
+        if sub.shape[1] == 0:
+            continue
+        sredni = sub.mean(axis=1); std = sub.std(axis=1).fillna(0)
+        kolor = "#aaaaaa" if kid <= 0 else kolory_hex[(kid - 1) % 10]
+        etykieta = "Szum" if kid <= 0 else f"Wzorzec Klastra {kid}"
+        ax.fill_between(x, sredni - std, sredni + std, color=kolor, alpha=0.15)
+        ax.plot(x, sredni, color=kolor, linewidth=1.8, label=etykieta)
+    ax.set_xlabel("Oś X"); ax.set_ylabel("Sygnał (średnia ±1σ)")
+    ax.legend(fontsize=7, framealpha=0.85)
+    ax.grid(True, color="#e0e0e0", linewidth=0.5)
+    fig.tight_layout()
+    buf = io.BytesIO(); fig.savefig(buf, format="png", dpi=dpi)
+    plt.close(fig); buf.seek(0)
+    return buf
+
+
+def _png_dendrogram(dane, metoda, etykiety, dpi=300):
+    try:
+        fig, ax = plt.subplots(figsize=(8.0, 4.2))
+        dendrogram(
+            linkage(dane, method="ward" if "Warda" in metoda else "average"),
+            labels=etykiety, leaf_rotation=90, ax=ax,
+        )
+        ax.set_ylabel("Odległość łączenia")
+        fig.tight_layout()
+        buf = io.BytesIO(); fig.savefig(buf, format="png", dpi=dpi)
+        plt.close(fig); buf.seek(0)
+        return buf
+    except Exception:
+        return None
+
 
 st.set_page_config(page_title="Analizator Krzywych Pro AI", layout="wide")
 
@@ -971,12 +1166,17 @@ try:
     """, height=0)
 
     # =================================================================
-    # WSPÓŁDZIELONA STANDARYZACJA (liczona raz — POPRAWKA #11)
-    # Skaler jest zachowany, żeby TĄ SAMĄ transformacją objąć nowe widma
-    # w sekcji klasyfikacji (WERSJA 2.2).
+    # WSPÓŁDZIELONA STANDARYZACJA (liczona raz)
+    # Widma wzorcowe są najpierw UJEDNOLICANE na wspólną, rosnącą siatkę
+    # osi X — dokładnie tą samą transformacją, przez którą przejdą nowe
+    # widma w sekcji klasyfikacji. Dzięki temu identyczne wejście daje
+    # identyczną reprezentację liczbową (self-match = 0), a k-NN wiernie
+    # odtwarza podział ekspercki po ponownym wgraniu tego samego pliku.
     # =================================================================
-    skaler_referencyjny = StandardScaler().fit(krzywe.T)
-    dane_std_oryginaly = skaler_referencyjny.transform(krzywe.T)
+    x_ref_ujedn, _przygotuj_widma = zbuduj_ujednolicacz_osi(x.values)
+    macierz_wzorcowe_ujedn = _przygotuj_widma(krzywe.values, x.values)  # (n_widm, n_pkt)
+    skaler_referencyjny = StandardScaler().fit(macierz_wzorcowe_ujedn)
+    dane_std_oryginaly = skaler_referencyjny.transform(macierz_wzorcowe_ujedn)
 
     # =================================================================
     # SUGESTIA LICZBY KLASTRÓW (K)
@@ -1152,6 +1352,36 @@ try:
         nazwy_do_wykresu = nazwy_krzywych
         numery_grup_do_wykresu = numery_grup
 
+    # =================================================================
+    # NAZWY KLASTRÓW LITERAMI GRUP EKSPERCKICH (a -> „Klaster A”)
+    # Gdy dostępny jest podział ekspercki, każdemu klastrowi nadajemy
+    # nazwę wg dominującej w nim grupy eksperckiej (przypisanie optymalne,
+    # algorytm węgierski) wraz z procentem czystości. Bez Ground Truth
+    # pozostają nazwy numeryczne („Klaster 1”).
+    # =================================================================
+    if gt_dostepny:
+        mapa_liter = mapuj_klastry_na_litery(
+            numery_grup_do_wykresu, etykiety_eksperta)
+    else:
+        mapa_liter = {}
+
+    def nazwa_klastra(k_id):
+        """Etykieta wyświetlana dla klastra (litera+czystość albo numer)."""
+        k_id = int(k_id)
+        if k_id in mapa_liter:
+            return mapa_liter[k_id][0]
+        return "Szum / Odrzuty" if k_id <= 0 else f"Klaster {k_id}"
+
+    def nazwa_klastra_pelna(k_id):
+        """Etykieta z procentem czystości, np. „Klaster A (82%)”."""
+        k_id = int(k_id)
+        if k_id in mapa_liter:
+            etyk, czyst = mapa_liter[k_id]
+            if czyst is not None:
+                return f"{etyk} ({czyst:.0f}%)"
+            return etyk
+        return "Szum / Odrzuty" if k_id <= 0 else f"Klaster {k_id}"
+
     ari_score = None
     nmi_score = None
     if gt_dostepny:
@@ -1202,7 +1432,7 @@ try:
             klaster_id = int(numery_grup_do_wykresu[i])
             if klaster_id > 0:
                 kolor = PLOTLY_KOLORY[(klaster_id - 1) % 10]
-                etykieta_grupy = f"Klaster {klaster_id}"
+                etykieta_grupy = nazwa_klastra(klaster_id)
             else:
                 kolor = "#aaaaaa"
                 etykieta_grupy = "Szum / Odrzuty"
@@ -1216,8 +1446,7 @@ try:
                 line=dict(color=kolor, width=1.2),
                 opacity=0.6,
                 hovertemplate=(
-                    f"<b>{col}</b><br>Klaster: "
-                    f"{klaster_id if klaster_id > 0 else 'Szum'}"
+                    f"<b>{col}</b><br>{etykieta_grupy}"
                     "<br>X: %{x}<br>Y: %{y:.4f}<extra></extra>"
                 ),
             ))
@@ -1255,7 +1484,9 @@ try:
 
         if k_id > 0:
             kolor = PLOTLY_KOLORY[(k_id - 1) % 10]
-            label_sredni = f"Wzorzec Klastra {k_id}"
+            label_sredni = ("Wzorzec " + nazwa_klastra(k_id)
+                            if k_id in mapa_liter
+                            else f"Wzorzec Klastra {k_id}")
         else:
             kolor = "#aaaaaa"
             label_sredni = "Średnia Szumu"
@@ -1310,18 +1541,24 @@ try:
     wiersze_eksportu = []
     for k_id in posortowane_klastry:
         if k_id == 0:
-            nazwa_klastra = "Szum / Odrzuty"
+            nazwa_kl = "Szum / Odrzuty"
             nazwa_koloru = "Szary"
+            czystosc_kl = None
         else:
-            nazwa_klastra = f"Klaster {k_id}"
+            nazwa_kl = nazwa_klastra(k_id)
             nazwa_koloru = NAZWY_KOLOROW[(k_id - 1) % 10]
+            czystosc_kl = (mapa_liter[k_id][1]
+                           if k_id in mapa_liter else None)
         for krzywa in klastry_slownik[k_id]:
-            wiersze_eksportu.append({
+            wiersz = {
                 "Krzywa": krzywa,
-                "Klaster": nazwa_klastra,
+                "Klaster": nazwa_kl,
                 "Kolor": nazwa_koloru,
                 "Nr Klastra": k_id,
-            })
+            }
+            if gt_dostepny:
+                wiersz["Czystość (%)"] = czystosc_kl
+            wiersze_eksportu.append(wiersz)
     df_eksport_klastry = pd.DataFrame(wiersze_eksportu)
 
     # POPRAWKA #1: przycisk w sidebarze dodawany PO obliczeniach,
@@ -1350,7 +1587,8 @@ try:
                         st.markdown("**⚪ Szum / Odrzuty**")
                     else:
                         n_koloru = NAZWY_KOLOROW[(k_id - 1) % 10]
-                        st.markdown(f"**🔹 Klaster {k_id}** ({n_koloru})")
+                        st.markdown(
+                            f"**🔹 {nazwa_klastra_pelna(k_id)}** ({n_koloru})")
                     st.caption(f"Liczba: {len(klastry_slownik[k_id])}")
                     st.code(", ".join(klastry_slownik[k_id]), language="text")
 
@@ -1374,13 +1612,44 @@ try:
                 df_eksport_klastry.to_excel(writer, index=False,
                                             sheet_name="Skład Klastrów")
                 arkusz = writer.sheets["Skład Klastrów"]
-                arkusz.column_dimensions["A"].width = 20
-                arkusz.column_dimensions["B"].width = 20
-                arkusz.column_dimensions["C"].width = 18
-                arkusz.column_dimensions["D"].width = 12
+                for kol, szer in zip("ABCDE", (20, 22, 18, 12, 12)):
+                    arkusz.column_dimensions[kol].width = szer
+
+                # --- Arkusz z wykresami publikacyjnymi (PNG, 300 DPI) ---
+                # Renderowane matplotlibem, więc niezależne od kaleido.
+                try:
+                    wb = writer.book
+                    ark_wyk = wb.create_sheet("Wykresy")
+                    ark_wyk["A1"] = ("Wykresy w rozdzielczości publikacyjnej "
+                                     "(300 DPI). Można je skopiować lub zapisać "
+                                     "jako obraz.")
+                    x_vals = np.asarray(x, dtype=float)
+                    wiersz_ankor = 3
+                    # 1) Wszystkie krzywe wg klastrów
+                    png1 = _png_krzywe(x_vals, krzywe_do_wykresu,
+                                       numery_grup_do_wykresu, PLOTLY_KOLORY)
+                    img1 = XLImage(png1); img1.anchor = f"A{wiersz_ankor}"
+                    ark_wyk.add_image(img1)
+                    wiersz_ankor += 24
+                    # 2) Profile modelowe (średnia ±1σ)
+                    png2 = _png_profile(x_vals, krzywe_do_wykresu,
+                                        numery_grup_do_wykresu, PLOTLY_KOLORY)
+                    img2 = XLImage(png2); img2.anchor = f"A{wiersz_ankor}"
+                    ark_wyk.add_image(img2)
+                    wiersz_ankor += 24
+                    # 3) Dendrogram — tylko dla metod czysto hierarchicznych
+                    if czy_dendrogram:
+                        etyk_d = [str(n) for n in nazwy_do_wykresu]
+                        png3 = _png_dendrogram(dane_do_algorytmu, metoda, etyk_d)
+                        if png3 is not None:
+                            img3 = XLImage(png3); img3.anchor = f"A{wiersz_ankor}"
+                            ark_wyk.add_image(img3)
+                except Exception as _blad_wyk:
+                    # Eksport danych ma zadziałać nawet, gdy render grafiki padnie
+                    pass
             bufor_xlsx.seek(0)
             st.download_button(
-                label="⬇️ Pobierz Excel",
+                label="⬇️ Pobierz Excel (dane + wykresy)",
                 data=bufor_xlsx.getvalue(),
                 file_name=f"sklady_klastrow_{metoda[:20].replace(' ', '_')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1433,63 +1702,41 @@ try:
                     st.error("W pliku nie znaleziono kolumn z widmami "
                              "(poza kolumną osi X).")
                 else:
-                    x_ref_raw = np.asarray(x, dtype=float)
-                    # np.interp interpoluje NA x_ref — jeśli referencyjna oś jest
-                    # malejąca (typowe dla EPR), sortujemy ją rosnąco wraz z
-                    # profilami wzorcowymi, by uniknąć zniekształceń.
-                    if x_ref_raw[0] > x_ref_raw[-1]:
-                        kol_ref = np.argsort(x_ref_raw)
-                        x_ref = x_ref_raw[kol_ref]
-                    else:
-                        kol_ref = np.arange(len(x_ref_raw))
-                        x_ref = x_ref_raw
+                    # Zabezpieczenie: zakresy osi X muszą się pokrywać,
+                    # inaczej interpolacja zwróciłaby wartości brzegowe (płaskie).
+                    if (x_nowe.min() > float(x_ref_ujedn.max())
+                            or x_nowe.max() < float(x_ref_ujedn.min())):
+                        st.error(
+                            "Zakres osi X nowych widm nie pokrywa się z "
+                            "referencyjnym — interpolacja niemożliwa. "
+                            f"Nowe: [{x_nowe.min():.4g}, {x_nowe.max():.4g}], "
+                            f"referencyjne: [{float(x_ref_ujedn.min()):.4g}, "
+                            f"{float(x_ref_ujedn.max()):.4g}]. Sprawdź jednostki "
+                            "osi X."
+                        )
+                        st.stop()
 
-                    # Interpolacja na siatkę referencyjną, gdy osie X się różnią.
-                    # np.interp WYMAGA rosnącego xp — widma EPR często mają oś X
-                    # malejącą (od wysokiego pola do niskiego) lub nieposortowaną,
-                    # co bez sortowania dawało płaskie (stałe) linie zamiast widm.
+                    # UJEDNOLICENIE nową ścieżką: dokładnie ta sama funkcja,
+                    # przez którą przeszły widma wzorcowe. Gwarantuje, że
+                    # identyczne wejście = identyczna reprezentacja (self-match=0).
                     trzeba_interpolowac = (
-                        len(x_nowe) != len(x_ref)
-                        or not np.allclose(x_nowe, x_ref)
+                        len(x_nowe) != len(x_ref_ujedn)
+                        or not np.allclose(np.sort(x_nowe), x_ref_ujedn)
                     )
-
                     if trzeba_interpolowac:
-                        # Ostrzeżenie, gdy zakresy X się nie pokrywają — poza
-                        # zakresem np.interp zwraca wartości brzegowe (płaskie).
-                        if (x_nowe.min() > x_ref.max()
-                                or x_nowe.max() < x_ref.min()):
-                            st.error(
-                                "Zakres osi X nowych widm nie pokrywa się z "
-                                "referencyjnym — interpolacja niemożliwa. "
-                                f"Nowe: [{x_nowe.min():.4g}, {x_nowe.max():.4g}], "
-                                f"referencyjne: [{x_ref.min():.4g}, "
-                                f"{x_ref.max():.4g}]. Sprawdź jednostki osi X."
-                            )
-                            st.stop()
-
-                        # Posortuj oś X nowych widm rosnąco (i przestaw widma)
-                        kolejnosc = np.argsort(x_nowe)
-                        x_nowe_sort = x_nowe[kolejnosc]
-
                         st.info(
                             f"Oś X nowych widm ({len(x_nowe)} pkt, zakres "
                             f"[{x_nowe.min():.4g}, {x_nowe.max():.4g}]) różni się "
-                            f"od referencyjnej ({len(x_ref)} pkt) — zastosowano "
-                            f"interpolację liniową na siatkę wzorcową."
+                            f"od referencyjnej ({len(x_ref_ujedn)} pkt) — "
+                            "zastosowano interpolację liniową na siatkę wzorcową."
                         )
-                        macierz_nowe = np.column_stack([
-                            np.interp(
-                                x_ref,
-                                x_nowe_sort,
-                                widma_nowe[c].values.astype(float)[kolejnosc],
-                            )
-                            for c in widma_nowe.columns
-                        ])
-                    else:
-                        macierz_nowe = widma_nowe.values.astype(float)
 
+                    # (n_widm, n_pkt) na wspólnej, rosnącej siatce referencyjnej
+                    dane_nowe_ujedn = _przygotuj_widma(
+                        widma_nowe.values.astype(float), x_nowe
+                    )
                     # TEN SAM skaler co dane wzorcowe — kluczowe dla spójności
-                    dane_nowe_std = skaler_referencyjny.transform(macierz_nowe.T)
+                    dane_nowe_std = skaler_referencyjny.transform(dane_nowe_ujedn)
 
                     metoda_klasyfikacji = st.radio(
                         "Metoda przypisania:",
@@ -1608,6 +1855,44 @@ try:
                                 "przypisanie niepewne, zweryfikuj wzrokowo "
                                 "na wykresie obok."
                             )
+
+                        # „UCIEKINIERZY”: gdy wgrano ten sam plik co wzorcowy,
+                        # a program dysponuje etykietami eksperckimi — pokaż
+                        # widma, których przypisanie różni się od etykiety a–e.
+                        if gt_dostepny:
+                            mapa_ekspert = {
+                                str(nz): str(et)
+                                for nz, et in zip(nazwy_krzywych, etykiety_eksperta)
+                            }
+                            wiersze_uciek = []
+                            for nz, prz in zip(nazwy_nowe, przypisania):
+                                oczek = mapa_ekspert.get(str(nz))
+                                if oczek is not None and str(prz) != oczek:
+                                    wiersze_uciek.append({
+                                        "Widmo": nz,
+                                        "Grupa ekspercka": oczek,
+                                        "Przypisano": str(prz),
+                                    })
+                            if wiersze_uciek:
+                                st.markdown(
+                                    f"##### 🔀 Rozbieżności z podziałem eksperckim "
+                                    f"({len(wiersze_uciek)} z {len(nazwy_nowe)}):"
+                                )
+                                st.caption(
+                                    "Te widma trafiły do innej grupy, niż wskazuje "
+                                    "etykieta eksperta — są geometrycznie graniczne "
+                                    "(pokrywają się z listą „czarnych owiec” i "
+                                    "anomalii MSE)."
+                                )
+                                st.dataframe(pd.DataFrame(wiersze_uciek),
+                                             hide_index=True,
+                                             use_container_width=True)
+                            else:
+                                st.success(
+                                    "✅ Wszystkie widma trafiły do swoich "
+                                    "eksperckich grup — pełna zgodność."
+                                )
+
                         csv_kl = df_wyniki_kl.to_csv(
                             index=False, encoding="utf-8-sig"
                         ).encode("utf-8-sig")
@@ -1627,12 +1912,17 @@ try:
                             for i, kat in enumerate(unikalne_kategorie)
                         }
                         fig_kl = go.Figure()
+                        # Wzorcowe profile i nowe widma rysujemy na wspólnej,
+                        # ujednoliconej (rosnącej) siatce osi X — spójnej z tym,
+                        # na czym faktycznie działa klasyfikator.
+                        klasy_ref_arr = np.asarray(
+                            [str(k) for k in klasy_referencyjne])
                         # Grube linie: średnie profile kategorii wzorcowych
                         for kat in unikalne_kategorie:
-                            maska_kat = [kr == kat for kr in klasy_referencyjne]
-                            profil_kat = krzywe.iloc[:, maska_kat].mean(axis=1).values
+                            maska_kat = klasy_ref_arr == kat
+                            profil_kat = macierz_wzorcowe_ujedn[maska_kat].mean(axis=0)
                             fig_kl.add_trace(go.Scatter(
-                                x=x_ref, y=profil_kat[kol_ref], mode="lines",
+                                x=x_ref_ujedn, y=profil_kat, mode="lines",
                                 name=f"Wzorzec: {kat}",
                                 legendgroup=f"wzorzec_{kat}",
                                 line=dict(color=mapa_kolorow[kat], width=3),
@@ -1641,7 +1931,7 @@ try:
                         for j, nazwa in enumerate(nazwy_nowe):
                             kat_j = str(przypisania[j])
                             fig_kl.add_trace(go.Scatter(
-                                x=x_ref, y=macierz_nowe[:, j], mode="lines",
+                                x=x_ref_ujedn, y=dane_nowe_ujedn[j], mode="lines",
                                 name=f"{nazwa} → {kat_j}",
                                 line=dict(color=mapa_kolorow.get(kat_j, "#aaaaaa"),
                                           width=1.5, dash="dash"),
