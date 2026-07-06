@@ -11,8 +11,11 @@
 #     OPTYMALNE przypisanie (algorytm węgierski) + procent czystości.
 #     Klastry nadmiarowe: „Klaster N (mieszany)”. Bez Ground Truth pozostają
 #     nazwy numeryczne.
-#  C. Eksport wykresów do Excela (matplotlib → PNG 300 DPI, osadzone w
-#     arkuszu „Wykresy”): krzywe wg klastrów, profile modelowe, dendrogram.
+#  C. Eksport wykresów do Excela: dane źródłowe w postaci kolumn X + serie
+#     Y (arkusze „Dane — krzywe”, „Dane — profile”, „Dane — wykres”) do
+#     samodzielnej edycji (kolory, typ linii, dodawanie/usuwanie serii),
+#     obok podglądu PNG 300 DPI. Klasyfikacja nowych widm ma teraz eksport
+#     do Excela (tabela przypisań + dane wykresu nakładkowego + podgląd).
 #
 # CHANGELOG względem wersji pierwotnej:
 #
@@ -337,6 +340,95 @@ def _png_dendrogram(dane, metoda, etykiety, dpi=300):
             labels=etykiety, leaf_rotation=90, ax=ax,
         )
         ax.set_ylabel("Odległość łączenia")
+        fig.tight_layout()
+        buf = io.BytesIO(); fig.savefig(buf, format="png", dpi=dpi)
+        plt.close(fig); buf.seek(0)
+        return buf
+    except Exception:
+        return None
+
+
+# =====================================================================
+# RAMKI DANYCH X+Y DO EDYCJI W EXCELU
+# Zamiast (lub obok) obrazka eksportujemy surowe serie: kolumna X oraz
+# po jednej kolumnie Y na każdą krzywą / profil. Dzięki temu w Excelu
+# można zmieniać kolory, typ linii, usuwać i dodawać serie.
+# =====================================================================
+def _df_krzywe_xy(x, krzywe_df, numery_grup, etykieciarz=None):
+    """Surowe krzywe: kolumna X + po jednej kolumnie na krzywą.
+    Nazwa kolumny zawiera nazwę krzywej i jej grupę, np. „y3 [Klaster A]”."""
+    dane = {"X": np.asarray(x, dtype=float)}
+    for i, col in enumerate(krzywe_df.columns):
+        kid = int(numery_grup[i])
+        etyk = etykieciarz(kid) if etykieciarz else (
+            "Szum" if kid <= 0 else f"Klaster {kid}")
+        dane[f"{col} [{etyk}]"] = krzywe_df.iloc[:, i].to_numpy()
+    return pd.DataFrame(dane)
+
+
+def _df_profile_xy(x, krzywe_df, numery_grup, etykieciarz=None):
+    """Uśrednione profile: kolumna X + na każdą grupę kolumny średniej,
+    dolnej i górnej granicy wstęgi (średnia ± 1 odch. std.)."""
+    dane = {"X": np.asarray(x, dtype=float)}
+    for kid in sorted(set(int(v) for v in numery_grup)):
+        maska = [int(numery_grup[i]) == kid for i in range(len(numery_grup))]
+        sub = krzywe_df.iloc[:, maska]
+        if sub.shape[1] == 0:
+            continue
+        etyk = etykieciarz(kid) if etykieciarz else (
+            "Szum" if kid <= 0 else f"Klaster {kid}")
+        sredni = sub.mean(axis=1).to_numpy()
+        std = sub.std(axis=1).fillna(0).to_numpy()
+        dane[f"{etyk} — średnia"] = sredni
+        dane[f"{etyk} — dolna (−1σ)"] = sredni - std
+        dane[f"{etyk} — górna (+1σ)"] = sredni + std
+    return pd.DataFrame(dane)
+
+
+def _zapisz_df_z_szerokoscia(writer, df, nazwa_arkusza, szer=16):
+    """Zapisuje DataFrame do arkusza i ustawia rozsądną szerokość kolumn."""
+    df.to_excel(writer, index=False, sheet_name=nazwa_arkusza)
+    ark = writer.sheets[nazwa_arkusza]
+    from openpyxl.utils import get_column_letter
+    for j in range(1, df.shape[1] + 1):
+        ark.column_dimensions[get_column_letter(j)].width = szer
+    return ark
+
+
+def _df_klasyfikacja_xy(x_ref, macierz_wzorc_ujedn, klasy_ref,
+                        dane_nowe_ujedn, nazwy_nowe, przypisania):
+    """Dane wykresu nakładkowego klasyfikacji: kolumna X + uśrednione
+    profile kategorii wzorcowych + każde nowe widmo jako osobna kolumna
+    (z dopiskiem przypisanej kategorii). Gotowe do samodzielnej edycji."""
+    dane = {"X (g-factor)": np.asarray(x_ref, dtype=float)}
+    klasy_arr = np.asarray([str(k) for k in klasy_ref])
+    for kat in sorted(set(klasy_arr)):
+        maska = klasy_arr == kat
+        dane[f"Wzorzec {kat}"] = macierz_wzorc_ujedn[maska].mean(axis=0)
+    for j, nazwa in enumerate(nazwy_nowe):
+        dane[f"{nazwa} → {przypisania[j]}"] = np.asarray(dane_nowe_ujedn[j])
+    return pd.DataFrame(dane)
+
+
+def _png_klasyfikacja(x_ref, macierz_wzorc_ujedn, klasy_ref,
+                      dane_nowe_ujedn, nazwy_nowe, przypisania,
+                      kolory_hex, dpi=300):
+    try:
+        klasy_arr = np.asarray([str(k) for k in klasy_ref])
+        kategorie = sorted(set(klasy_arr))
+        mapa = {kat: kolory_hex[i % 10] for i, kat in enumerate(kategorie)}
+        fig, ax = plt.subplots(figsize=(7.2, 4.4))
+        for kat in kategorie:
+            maska = klasy_arr == kat
+            ax.plot(x_ref, macierz_wzorc_ujedn[maska].mean(axis=0),
+                    color=mapa[kat], linewidth=2.4, label=f"Wzorzec {kat}")
+        for j, nazwa in enumerate(nazwy_nowe):
+            kat_j = str(przypisania[j])
+            ax.plot(x_ref, dane_nowe_ujedn[j], color=mapa.get(kat_j, "#aaaaaa"),
+                    linewidth=1.1, linestyle="--", alpha=0.85)
+        ax.set_xlabel("Oś X (g-factor)"); ax.set_ylabel("Sygnał")
+        ax.legend(fontsize=7, framealpha=0.85)
+        ax.grid(True, color="#e0e0e0", linewidth=0.5)
         fig.tight_layout()
         buf = io.BytesIO(); fig.savefig(buf, format="png", dpi=dpi)
         plt.close(fig); buf.seek(0)
@@ -1615,37 +1707,53 @@ try:
                 for kol, szer in zip("ABCDE", (20, 22, 18, 12, 12)):
                     arkusz.column_dimensions[kol].width = szer
 
+                x_vals = np.asarray(x, dtype=float)
+
+                # --- Arkusze z DANYMI wykresów (X + serie Y do edycji) ---
+                # Surowe serie: łatwo zmienić kolory/linie, usuwać/dodawać
+                # serie i budować własny wykres w Excelu.
+                try:
+                    df_xy_krzywe = _df_krzywe_xy(
+                        x_vals, krzywe_do_wykresu, numery_grup_do_wykresu,
+                        nazwa_klastra)
+                    _zapisz_df_z_szerokoscia(
+                        writer, df_xy_krzywe, "Dane — krzywe")
+
+                    df_xy_profile = _df_profile_xy(
+                        x_vals, krzywe_do_wykresu, numery_grup_do_wykresu,
+                        nazwa_klastra)
+                    _zapisz_df_z_szerokoscia(
+                        writer, df_xy_profile, "Dane — profile")
+                except Exception:
+                    pass
+
                 # --- Arkusz z wykresami publikacyjnymi (PNG, 300 DPI) ---
-                # Renderowane matplotlibem, więc niezależne od kaleido.
+                # Podgląd/gotowy rysunek; dane do edycji są w arkuszach wyżej.
                 try:
                     wb = writer.book
-                    ark_wyk = wb.create_sheet("Wykresy")
-                    ark_wyk["A1"] = ("Wykresy w rozdzielczości publikacyjnej "
-                                     "(300 DPI). Można je skopiować lub zapisać "
-                                     "jako obraz.")
-                    x_vals = np.asarray(x, dtype=float)
+                    ark_wyk = wb.create_sheet("Wykresy (podgląd)")
+                    ark_wyk["A1"] = ("Podgląd w rozdzielczości 300 DPI. "
+                                     "Dane źródłowe do samodzielnej edycji "
+                                     "wykresów znajdują się w arkuszach "
+                                     "„Dane — krzywe” i „Dane — profile”.")
                     wiersz_ankor = 3
-                    # 1) Wszystkie krzywe wg klastrów
                     png1 = _png_krzywe(x_vals, krzywe_do_wykresu,
                                        numery_grup_do_wykresu, PLOTLY_KOLORY)
                     img1 = XLImage(png1); img1.anchor = f"A{wiersz_ankor}"
                     ark_wyk.add_image(img1)
                     wiersz_ankor += 24
-                    # 2) Profile modelowe (średnia ±1σ)
                     png2 = _png_profile(x_vals, krzywe_do_wykresu,
                                         numery_grup_do_wykresu, PLOTLY_KOLORY)
                     img2 = XLImage(png2); img2.anchor = f"A{wiersz_ankor}"
                     ark_wyk.add_image(img2)
                     wiersz_ankor += 24
-                    # 3) Dendrogram — tylko dla metod czysto hierarchicznych
                     if czy_dendrogram:
                         etyk_d = [str(n) for n in nazwy_do_wykresu]
                         png3 = _png_dendrogram(dane_do_algorytmu, metoda, etyk_d)
                         if png3 is not None:
                             img3 = XLImage(png3); img3.anchor = f"A{wiersz_ankor}"
                             ark_wyk.add_image(img3)
-                except Exception as _blad_wyk:
-                    # Eksport danych ma zadziałać nawet, gdy render grafiki padnie
+                except Exception:
                     pass
             bufor_xlsx.seek(0)
             st.download_button(
@@ -1893,16 +2001,63 @@ try:
                                     "eksperckich grup — pełna zgodność."
                                 )
 
-                        csv_kl = df_wyniki_kl.to_csv(
-                            index=False, encoding="utf-8-sig"
-                        ).encode("utf-8-sig")
-                        st.download_button(
-                            "⬇️ Pobierz przypisania (CSV)",
-                            data=csv_kl,
-                            file_name="klasyfikacja_nowych_widm.csv",
-                            mime="text/csv",
-                            use_container_width=True,
-                        )
+                        col_kl_csv, col_kl_xlsx = st.columns(2)
+                        with col_kl_csv:
+                            csv_kl = df_wyniki_kl.to_csv(
+                                index=False, encoding="utf-8-sig"
+                            ).encode("utf-8-sig")
+                            st.download_button(
+                                "⬇️ Pobierz przypisania (CSV)",
+                                data=csv_kl,
+                                file_name="klasyfikacja_nowych_widm.csv",
+                                mime="text/csv",
+                                use_container_width=True,
+                            )
+                        with col_kl_xlsx:
+                            bufor_kl = io.BytesIO()
+                            with pd.ExcelWriter(bufor_kl,
+                                                engine="openpyxl") as writer_kl:
+                                # 1) Tabela przypisań (widmo, kategoria, pewność)
+                                _zapisz_df_z_szerokoscia(
+                                    writer_kl, df_wyniki_kl,
+                                    "Przypisania", szer=22)
+                                # 2) Dane wykresu nakładkowego (X + serie Y)
+                                try:
+                                    df_kl_xy = _df_klasyfikacja_xy(
+                                        x_ref_ujedn, macierz_wzorcowe_ujedn,
+                                        klasy_referencyjne, dane_nowe_ujedn,
+                                        nazwy_nowe, przypisania)
+                                    _zapisz_df_z_szerokoscia(
+                                        writer_kl, df_kl_xy, "Dane — wykres")
+                                except Exception:
+                                    pass
+                                # 3) Podgląd wykresu (PNG 300 DPI)
+                                try:
+                                    png_kl = _png_klasyfikacja(
+                                        x_ref_ujedn, macierz_wzorcowe_ujedn,
+                                        klasy_referencyjne, dane_nowe_ujedn,
+                                        nazwy_nowe, przypisania, PLOTLY_KOLORY)
+                                    if png_kl is not None:
+                                        wb_kl = writer_kl.book
+                                        ark_kl = wb_kl.create_sheet(
+                                            "Wykres (podgląd)")
+                                        ark_kl["A1"] = (
+                                            "Podgląd 300 DPI. Dane źródłowe do "
+                                            "edycji wykresu są w arkuszu "
+                                            "„Dane — wykres”.")
+                                        img_kl = XLImage(png_kl)
+                                        img_kl.anchor = "A3"
+                                        ark_kl.add_image(img_kl)
+                                except Exception:
+                                    pass
+                            bufor_kl.seek(0)
+                            st.download_button(
+                                "⬇️ Pobierz Excel (dane + wykres)",
+                                data=bufor_kl.getvalue(),
+                                file_name="klasyfikacja_nowych_widm.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                use_container_width=True,
+                            )
 
                     with col_kl2:
                         st.markdown("##### 📈 Nowe widma na tle wzorców kategorii:")
