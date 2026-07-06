@@ -14,8 +14,11 @@
 #  C. Eksport wykresów do Excela: dane źródłowe w postaci kolumn X + serie
 #     Y (arkusze „Dane — krzywe”, „Dane — profile”, „Dane — wykres”) do
 #     samodzielnej edycji (kolory, typ linii, dodawanie/usuwanie serii),
-#     obok podglądu PNG 300 DPI. Klasyfikacja nowych widm ma teraz eksport
-#     do Excela (tabela przypisań + dane wykresu nakładkowego + podgląd).
+#     obok podglądu PNG 300 DPI. Dodatkowo natywny, edytowalny wykres
+#     Excela odtwarzający styl aplikacji (profile wzorcowe — linie ciągłe,
+#     nowe widma — linie przerywane w kolorze przypisanej kategorii).
+#     Klasyfikacja nowych widm ma teraz eksport do Excela (tabela przypisań
+#     + dane wykresu nakładkowego + natywny wykres + podgląd).
 #
 # CHANGELOG względem wersji pierwotnej:
 #
@@ -123,6 +126,9 @@ from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
 from scipy.spatial.distance import squareform
 from scipy.optimize import linear_sum_assignment
 from openpyxl.drawing.image import Image as XLImage
+from openpyxl.chart import LineChart, Reference
+from openpyxl.drawing.line import LineProperties
+from openpyxl.chart.shapes import GraphicalProperties
 
 # --- Bezpieczne importy opcjonalnych zależności ---
 try:
@@ -435,6 +441,51 @@ def _png_klasyfikacja(x_ref, macierz_wzorc_ujedn, klasy_ref,
         return buf
     except Exception:
         return None
+
+
+def _hex(kolor):
+    """Normalizuje kolor '#1f77b4' -> '1F77B4' na potrzeby openpyxl."""
+    return str(kolor).lstrip("#").upper()
+
+
+def _wykres_excel_klasyfikacja(ws, n_pkt, kolory_serii, style_serii,
+                               tytul="Nowe widma na tle wzorców kategorii"):
+    """Buduje natywny, edytowalny wykres Excela z danych już zapisanych w
+    arkuszu `ws` (układ: kol.1 = X, kol.2..K = serie). Styl jak w aplikacji:
+    profile wzorcowe — grube linie ciągłe; nowe widma — cienkie przerywane.
+
+    kolory_serii: lista hex (bez #) w kolejności serii (kol. 2..K).
+    style_serii:  lista 'solid' / 'dash' w tej samej kolejności.
+    """
+    n_serii = len(kolory_serii)
+    chart = LineChart()
+    chart.title = tytul
+    chart.style = 2
+    chart.height = 11        # cm
+    chart.width = 20         # cm
+    chart.x_axis.title = "Oś X (g-factor)"
+    chart.y_axis.title = "Sygnał"
+    chart.x_axis.delete = False
+    chart.y_axis.delete = False
+
+    dane = Reference(ws, min_col=2, max_col=1 + n_serii,
+                     min_row=1, max_row=1 + n_pkt)
+    cats = Reference(ws, min_col=1, min_row=2, max_row=1 + n_pkt)
+    chart.add_data(dane, titles_from_data=True)
+    chart.set_categories(cats)
+
+    for idx, seria in enumerate(chart.series):
+        dash = style_serii[idx] == "dash"
+        lp = LineProperties(
+            solidFill=kolory_serii[idx],
+            w=12700 if dash else 28575,      # EMU: ~1 pt vs ~2.25 pt
+        )
+        if dash:
+            lp.prstDash = "dash"
+        seria.graphicalProperties = GraphicalProperties()
+        seria.graphicalProperties.line = lp
+        seria.smooth = False
+    return chart
 
 
 st.set_page_config(page_title="Analizator Krzywych Pro AI", layout="wide")
@@ -1722,8 +1773,39 @@ try:
                     df_xy_profile = _df_profile_xy(
                         x_vals, krzywe_do_wykresu, numery_grup_do_wykresu,
                         nazwa_klastra)
-                    _zapisz_df_z_szerokoscia(
+                    ark_prof = _zapisz_df_z_szerokoscia(
                         writer, df_xy_profile, "Dane — profile")
+                    # Natywny wykres profili: rysujemy kolumny „— średnia”
+                    # (co trzecia, począwszy od kol. 2), ciągłe, w kolorach grup.
+                    try:
+                        chart_p = LineChart()
+                        chart_p.title = "Uśrednione profile modelowe"
+                        chart_p.height = 10; chart_p.width = 18
+                        chart_p.x_axis.title = "Oś X"; chart_p.y_axis.title = "Sygnał"
+                        chart_p.x_axis.delete = False; chart_p.y_axis.delete = False
+                        cats_p = Reference(ark_prof, min_col=1, min_row=2,
+                                           max_row=1 + len(df_xy_profile))
+                        kolumny_srednie = list(range(2, df_xy_profile.shape[1] + 1, 3))
+                        grupy_prof = sorted(set(int(v)
+                                                for v in numery_grup_do_wykresu))
+                        for poz, kol_idx in enumerate(kolumny_srednie):
+                            ref = Reference(ark_prof, min_col=kol_idx,
+                                            max_col=kol_idx, min_row=1,
+                                            max_row=1 + len(df_xy_profile))
+                            chart_p.add_data(ref, titles_from_data=True)
+                        chart_p.set_categories(cats_p)
+                        for poz, seria in enumerate(chart_p.series):
+                            gid = grupy_prof[poz] if poz < len(grupy_prof) else 0
+                            kolor = ("AAAAAA" if gid <= 0
+                                     else _hex(PLOTLY_KOLORY[(gid - 1) % 10]))
+                            seria.graphicalProperties = GraphicalProperties()
+                            seria.graphicalProperties.line = LineProperties(
+                                solidFill=kolor, w=28575)
+                            seria.smooth = False
+                        ark_prof.add_chart(
+                            chart_p, f"A{len(df_xy_profile) + 4}")
+                    except Exception:
+                        pass
                 except Exception:
                     pass
 
@@ -2022,13 +2104,39 @@ try:
                                     writer_kl, df_wyniki_kl,
                                     "Przypisania", szer=22)
                                 # 2) Dane wykresu nakładkowego (X + serie Y)
+                                #    + natywny, edytowalny wykres Excela w stylu
+                                #    aplikacji (wzorce ciągłe, nowe przerywane).
                                 try:
                                     df_kl_xy = _df_klasyfikacja_xy(
                                         x_ref_ujedn, macierz_wzorcowe_ujedn,
                                         klasy_referencyjne, dane_nowe_ujedn,
                                         nazwy_nowe, przypisania)
-                                    _zapisz_df_z_szerokoscia(
+                                    ark_dane_kl = _zapisz_df_z_szerokoscia(
                                         writer_kl, df_kl_xy, "Dane — wykres")
+                                    # Kolory i style serii w kolejności kolumn:
+                                    # najpierw wzorce (ciągłe), potem nowe (dash).
+                                    kategorie_kl = sorted(
+                                        set(str(k) for k in klasy_referencyjne))
+                                    mapa_kol_kl = {
+                                        kat: PLOTLY_KOLORY[i % 10]
+                                        for i, kat in enumerate(kategorie_kl)
+                                    }
+                                    kolory_serii = [
+                                        _hex(mapa_kol_kl[kat])
+                                        for kat in kategorie_kl
+                                    ]
+                                    style_serii = ["solid"] * len(kategorie_kl)
+                                    for prz in przypisania:
+                                        kol = mapa_kol_kl.get(str(prz), "#aaaaaa")
+                                        kolory_serii.append(_hex(kol))
+                                        style_serii.append("dash")
+                                    wykres_kl = _wykres_excel_klasyfikacja(
+                                        ark_dane_kl, len(df_kl_xy),
+                                        kolory_serii, style_serii)
+                                    # Wykres pod danymi (2 wiersze odstępu) —
+                                    # zawsze widoczny niezależnie od liczby serii.
+                                    ark_dane_kl.add_chart(
+                                        wykres_kl, f"A{len(df_kl_xy) + 4}")
                                 except Exception:
                                     pass
                                 # 3) Podgląd wykresu (PNG 300 DPI)
