@@ -606,7 +606,8 @@ def _wykres_excel_klasyfikacja(ws, n_pkt, kolory_serii, style_serii,
     return chart
 
 
-st.set_page_config(page_title="Analizator Krzywych Pro AI", layout="wide")
+st.set_page_config(page_title="Analizator Krzywych Pro AI",
+                   page_icon="⚛️", layout="wide")
 
 
 # =====================================================================
