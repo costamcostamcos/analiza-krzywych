@@ -1,6 +1,18 @@
 # =====================================================================
-# INTERAKTYWNY ANALIZATOR KRZYWYCH AI PRO — WERSJA 3
+# INTERAKTYWNY ANALIZATOR KRZYWYCH AI PRO — WERSJA 4
 # =====================================================================
+# NOWE W WERSJI 4:
+#  D. Klasyfikacja regułowa widm EPR wg drzew decyzyjnych z pracy
+#     Marciniak et al. (2025), Front. Public Health 13:1659601 (Fig. 1A/1B).
+#     Deterministyczne przypisanie widma do jednego z 5 typów line-shape
+#     (I–V, z podziałem IVA/IVB) na podstawie znaku sygnału w wybranych
+#     wartościach g oraz obecności lokalnych ekstremów. W pełni
+#     interpretowalna (zwraca ścieżkę decyzyjną), bez uczenia. Działa na
+#     tej samej ujednoliconej osi X co reszta aplikacji. Nowa sekcja
+#     rozwijana z tabelą typów, podglądem widm z punktami decyzyjnymi,
+#     eksportem CSV oraz — gdy dostępny Ground Truth — macierzą zgodności
+#     etykiet regułowych z podziałem eksperckim.
+#
 # NOWE W WERSJI 3:
 #  A. Ujednolicenie osi X: widma wzorcowe i nowe przechodzą przez TĘ SAMĄ
 #     funkcję (sortowanie rosnące + interpolacja na wspólną siatkę). Dzięki
@@ -224,6 +236,112 @@ def zbuduj_ujednolicacz_osi(x_ref_raw):
         return wynik.T.copy()
 
     return x_ref, przygotuj
+
+
+# =====================================================================
+# KLASYFIKACJA REGUŁOWA WIDM EPR (Marciniak et al. 2025, Fig. 1A/1B)
+# =====================================================================
+# Deterministyczne drzewa decyzyjne z pracy „Categorization of screen
+# glasses of mobile devices...”. Klasyfikacja opiera się na znaku sygnału
+# w wybranych wartościach g oraz obecności lokalnych ekstremów w zadanych
+# zakresach g. Nie wymaga uczenia — jest w pełni interpretowalna i zwraca
+# ścieżkę decyzyjną. Działa na widmach po ujednoliceniu osi X (ta sama
+# siatka co reszta aplikacji), więc znaki f(g) są liczone spójnie.
+#
+# UWAGA metodologiczna: progi znakowe zakładają preprocessing zbliżony do
+# pracy (odjęcie tła rurki, liniowa korekcja bazy, normalizacja). Dla
+# innych spektrometrów/parametrów akwizycji może być konieczne dostrojenie
+# okna wygładzania i prominencji ekstremów.
+
+# Punkty i zakresy g używane przez drzewa decyzyjne (z Fig. 1)
+_REG_PUNKTY_G = [2.0000, 2.0043, 2.0171]
+_REG_ZAKRESY_G = {
+    "min_III_V": (2.0001, 2.0040),   # lokalne minimum -> V, brak -> III
+    "max_II": (2.0200, 2.0250),      # lokalne maksimum -> II
+    "min_I_IVA": (1.9930, 1.9990),   # lokalne minimum -> I, brak -> IVA
+}
+
+
+def _reg_sort(g, y):
+    g = np.asarray(g, dtype=float)
+    y = np.asarray(y, dtype=float)
+    idx = np.argsort(g)
+    return g[idx], y[idx]
+
+
+def _reg_smooth(y, window=7):
+    """Średnia ruchoma z nieparzystym oknem (wygładzenie szumu)."""
+    if window is None or window < 3:
+        return y
+    window = window + 1 if window % 2 == 0 else window
+    kernel = np.ones(window) / window
+    return np.convolve(y, kernel, mode="same")
+
+
+def reg_value_at_g(g, y, g0):
+    """Interpolowana wartość sygnału f(g0)."""
+    gs, ys = _reg_sort(g, y)
+    return float(np.interp(g0, gs, ys))
+
+
+def _reg_extremum(g, y, g_lo, g_hi, kind="min", smooth_window=7, prominence=0.0):
+    """Czy w zakresie g ∈ (g_lo; g_hi) istnieje lokalne ekstremum danego typu?
+
+    Ekstremum musi leżeć wewnątrz okna (nie na brzegu) i odstawać od wartości
+    brzegowych o co najmniej `prominence` — to odsiewa ekstrema szumowe.
+    """
+    gs, ys = _reg_sort(g, y)
+    lo, hi = min(g_lo, g_hi), max(g_lo, g_hi)
+    maska = (gs >= lo) & (gs <= hi)
+    if maska.sum() < 5:
+        raise ValueError(f"Za mało punktów w zakresie g=({lo}; {hi}).")
+    seg = _reg_smooth(ys, smooth_window)[maska]
+    if kind == "max":
+        seg = -seg
+    i = int(np.argmin(seg))
+    wewnatrz = 0 < i < len(seg) - 1
+    wystajace = (min(seg[0], seg[-1]) - seg[i]) >= prominence
+    return bool(wewnatrz and wystajace)
+
+
+def reg_klasyfikuj_nienapromienione(g, y, smooth_window=7, prominence=0.0):
+    """Drzewo Fig. 1A (próbki 0 Gy). Zwraca (typ, lista_kroków)."""
+    sciezka = []
+    f2000 = reg_value_at_g(g, y, 2.0000)
+    sciezka.append(f"f(2.0000) = {f2000:.3e}")
+    if f2000 < 0:
+        ma_min = _reg_extremum(g, y, 2.0040, 2.0001, "min", smooth_window, prominence)
+        sciezka.append(f"lokalne min w (2.0040; 2.0001): {ma_min}")
+        return ("V" if ma_min else "III"), sciezka
+    f20171 = reg_value_at_g(g, y, 2.0171)
+    sciezka.append(f"f(2.0171) = {f20171:.3e}")
+    if f20171 < 0:
+        return "IVB", sciezka
+    ma_max = _reg_extremum(g, y, 2.0250, 2.0200, "max", smooth_window, prominence)
+    sciezka.append(f"lokalne max w (2.0250; 2.0200): {ma_max}")
+    if ma_max:
+        return "II", sciezka
+    ma_min = _reg_extremum(g, y, 1.9990, 1.9930, "min", smooth_window, prominence)
+    sciezka.append(f"lokalne min w (1.9990; 1.9930): {ma_min}")
+    return ("I" if ma_min else "IVA"), sciezka
+
+
+def reg_klasyfikuj_napromienione(g, y, smooth_window=7, prominence=0.0):
+    """Drzewo Fig. 1B (próbki 10 Gy). IVA i IVB nierozróżnialne. Zwraca (typ, kroki)."""
+    sciezka = []
+    f2000 = reg_value_at_g(g, y, 2.0000)
+    sciezka.append(f"f(2.0000) = {f2000:.3e}")
+    if f2000 < 0:
+        ma_min = _reg_extremum(g, y, 2.0040, 2.0001, "min", smooth_window, prominence)
+        sciezka.append(f"lokalne min w (2.0040; 2.0001): {ma_min}")
+        return ("V" if ma_min else "III"), sciezka
+    f20171 = reg_value_at_g(g, y, 2.0171)
+    sciezka.append(f"f(2.0171) = {f20171:.3e}")
+    if f20171 < 0:
+        return "IVA&IVB", sciezka
+    f20043 = reg_value_at_g(g, y, 2.0043)
+    sciezka.append(f"f(2.0043) = {f20043:.3e}")
+    return ("I" if f20043 > 0 else "II"), sciezka
 
 
 # =====================================================================
@@ -1413,6 +1531,166 @@ try:
         with c_d2:
             st.markdown(f"#### Obróbka Wstępna: `{optymalizacja}`")
             st.write(OPISY_PREPROCESSING.get(optymalizacja, ""))
+
+    # =================================================================
+    # KLASYFIKACJA REGUŁOWA WIDM EPR (Marciniak et al. 2025) — NOWE W v4
+    # Deterministyczne drzewa decyzyjne z Fig. 1A/1B. Działa na widmach
+    # wzorcowych po ujednoliceniu osi X (macierz_wzorcowe_ujedn na siatce
+    # x_ref_ujedn), więc znaki f(g) i ekstrema są liczone spójnie z resztą
+    # aplikacji. Nie wymaga uczenia ani Ground Truth.
+    # =================================================================
+    with st.expander("🧪 Klasyfikacja regułowa EPR (typy I–V wg Marciniak 2025)",
+                     expanded=False):
+        st.markdown(
+            "Przypisuje każde widmo do jednego z pięciu typów line-shape "
+            "(**I, II, III, IVA, IVB, V**) na podstawie drzew decyzyjnych z pracy "
+            "*Marciniak et al. (2025), Front. Public Health 13:1659601* (Fig. 1). "
+            "Metoda jest **deterministyczna i interpretowalna** — nie uczy się na "
+            "danych, tylko sprawdza znak sygnału w wybranych wartościach g oraz "
+            "obecność lokalnych ekstremów. Zwraca pełną ścieżkę decyzyjną."
+        )
+        st.caption(
+            "Działa na tej samej ujednoliconej (rosnącej) osi g co reszta "
+            "aplikacji. Zakłada preprocessing zbliżony do pracy (odjęcie tła "
+            "rurki, liniowa korekcja bazy, normalizacja). Jeśli oś X jest w mT, "
+            "przelicz ją najpierw na g-factor. Progi znakowe f(g) mogą wymagać "
+            "dostrojenia dla innego spektrometru lub parametrów akwizycji."
+        )
+
+        col_reg1, col_reg2, col_reg3 = st.columns(3)
+        with col_reg1:
+            reg_tryb = st.radio(
+                "Rodzaj widm:",
+                ["Nienapromienione (0 Gy)", "Napromienione (10 Gy)"],
+                key="reg_tryb",
+                help="Wybiera drzewo decyzyjne: Fig. 1A (0 Gy) lub 1B (10 Gy). "
+                     "W trybie napromienionym typy IVA i IVB są nierozróżnialne.",
+            )
+        with col_reg2:
+            reg_okno = st.slider(
+                "Okno wygładzania:", min_value=3, max_value=21, value=7, step=2,
+                key="reg_okno",
+                help="Nieparzyste okno średniej ruchomej przy wykrywaniu "
+                     "lokalnych ekstremów (odsiewa szum).",
+            )
+        with col_reg3:
+            reg_prom = st.number_input(
+                "Prominencja ekstremów (a.u.):", min_value=0.0, value=0.0,
+                format="%.2e", key="reg_prom",
+                help="Próg odsiewający ekstrema szumowe; sugerowane ~3σ szumu "
+                     "linii bazowej. 0 = brak filtra prominencji.",
+            )
+
+        reg_fn = (reg_klasyfikuj_nienapromienione
+                  if reg_tryb.startswith("Nienapromienione")
+                  else reg_klasyfikuj_napromienione)
+
+        # Klasyfikacja wszystkich widm wzorcowych (na ujednoliconej siatce)
+        reg_wiersze = []
+        reg_typy = []
+        for i, nazwa in enumerate(nazwy_krzywych):
+            y_widmo = macierz_wzorcowe_ujedn[i]
+            try:
+                typ, sciezka = reg_fn(x_ref_ujedn, y_widmo,
+                                      smooth_window=reg_okno,
+                                      prominence=float(reg_prom))
+                reg_typy.append(typ)
+                reg_wiersze.append({
+                    "Widmo": str(nazwa),
+                    "Typ (line-shape)": typ,
+                    "f(2.0000)": round(reg_value_at_g(x_ref_ujedn, y_widmo, 2.0000), 5),
+                    "f(2.0171)": round(reg_value_at_g(x_ref_ujedn, y_widmo, 2.0171), 5),
+                    "Ścieżka decyzyjna": " → ".join(sciezka),
+                })
+            except ValueError as e:
+                reg_typy.append("BŁĄD")
+                reg_wiersze.append({
+                    "Widmo": str(nazwa),
+                    "Typ (line-shape)": "BŁĄD",
+                    "f(2.0000)": None,
+                    "f(2.0171)": None,
+                    "Ścieżka decyzyjna": str(e),
+                })
+
+        df_reg = pd.DataFrame(reg_wiersze)
+
+        col_reg_tab, col_reg_wyk = st.columns([3, 2])
+        with col_reg_tab:
+            st.markdown("##### 📋 Przypisane typy:")
+            st.dataframe(df_reg, hide_index=True, use_container_width=True)
+            licznosci_typ = pd.Series(reg_typy).value_counts()
+            st.caption("Liczność typów: " + ", ".join(
+                f"{t}: {n}" for t, n in licznosci_typ.items()))
+
+            # Rekomendacja dozymetryczna wg wniosków pracy (typy III i V)
+            n_dozy = sum(1 for t in reg_typy if t in ("III", "V"))
+            if n_dozy > 0:
+                st.info(
+                    f"💡 {n_dozy} widm(o) należy do typów **III/V**, które wg "
+                    "Marciniak et al. (2025) są rekomendowane do dozymetrii "
+                    "(odporność na UV i wygrzewanie BG bez utraty tła)."
+                )
+
+            csv_reg = df_reg.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+            st.download_button(
+                "⬇️ Pobierz typy regułowe (CSV)",
+                data=csv_reg,
+                file_name="klasyfikacja_regulowa_epr.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+
+        with col_reg_wyk:
+            st.markdown("##### 📈 Widma z punktami decyzyjnymi:")
+            reg_wybrane = st.multiselect(
+                "Widma do podglądu:", [str(n) for n in nazwy_krzywych],
+                default=[str(n) for n in nazwy_krzywych[:min(4, n_krzywych)]],
+                key="reg_multiselect",
+            )
+            if reg_wybrane:
+                fig_reg = go.Figure()
+                mapa_nazw = {str(n): i for i, n in enumerate(nazwy_krzywych)}
+                for nz in reg_wybrane:
+                    i = mapa_nazw[nz]
+                    fig_reg.add_trace(go.Scatter(
+                        x=x_ref_ujedn, y=macierz_wzorcowe_ujedn[i],
+                        mode="lines", name=f"{nz} ({reg_typy[i]})",
+                        line=dict(width=1.4),
+                    ))
+                # Pionowe linie w punktach decyzyjnych g
+                for g0 in _REG_PUNKTY_G:
+                    fig_reg.add_vline(x=g0, line_dash="dot",
+                                      line_color="gray", opacity=0.5)
+                fig_reg.update_layout(
+                    height=360, margin=dict(l=10, r=10, t=10, b=10),
+                    xaxis=dict(title="g-factor", showgrid=True,
+                               gridcolor="#e0e0e0"),
+                    yaxis=dict(title="Sygnał EPR (a.u.)", showgrid=True,
+                               gridcolor="#e0e0e0"),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                bgcolor="rgba(255,255,255,0.8)"),
+                    hovermode="closest",
+                )
+                st.plotly_chart(fig_reg, use_container_width=True)
+                st.caption(
+                    "Kropkowane pionowe linie: punkty g = 2.0000, 2.0043, 2.0171 "
+                    "użyte w drzewie decyzyjnym."
+                )
+
+        # Macierz zgodności z podziałem eksperckim (jeśli dostępny GT)
+        if gt_dostepny:
+            st.markdown("---")
+            st.markdown("##### 🔗 Zgodność typów regułowych z podziałem eksperckim:")
+            df_krzyz = pd.crosstab(
+                pd.Series([str(e) for e in etykiety_eksperta], name="Grupa ekspercka"),
+                pd.Series(reg_typy, name="Typ regułowy"),
+            )
+            st.dataframe(df_krzyz, use_container_width=True)
+            st.caption(
+                "Tabela krzyżowa: ile widm z każdej grupy eksperckiej trafiło "
+                "do poszczególnych typów regułowych. Pozwala sprawdzić, czy "
+                "kategoryzacja z pracy pokrywa się z Twoim podziałem."
+            )
 
     # =================================================================
     # PRZETWARZANIE DANYCH WEJŚCIOWYCH
