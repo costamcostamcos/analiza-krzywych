@@ -1,8 +1,9 @@
 streamlit
 pandas
-scikit-learn
+numpy
 matplotlib
-openpyxl
-tslearn
-torch
 plotly
+scikit-learn
+scipy
+openpyxl
+umap-learn
