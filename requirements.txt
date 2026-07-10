@@ -6,4 +6,3 @@ plotly
 scikit-learn
 scipy
 openpyxl
-umap-learn
