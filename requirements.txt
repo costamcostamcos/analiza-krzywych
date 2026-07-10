@@ -6,3 +6,10 @@ plotly
 scikit-learn
 scipy
 openpyxl
+# UMAP — przywrócony na wersjach z gotowymi wheelami dla Pythona 3.12.
+# Kluczowe: NIE przypinać starego umap-learn==0.5.12 (ciągnął numba==0.53.1
+# i llvmlite==0.36.0, które nie działają na 3.12 i wywalały build/segfault).
+# Poniższe minimalne wersje mają prekompilowane wheele cp312 — bez kompilacji.
+umap-learn>=0.5.7
+numba>=0.60
+llvmlite>=0.43
