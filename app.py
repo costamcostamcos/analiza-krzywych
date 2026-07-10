@@ -25,6 +25,11 @@
 #     podsumowanie wskazuje osobno metodę najskuteczniejszą i najstabilniejszą.
 #     Cel: odróżnić realną przewagę metody od szczęśliwego trafienia ziarna
 #     na małym zbiorze.
+#     [v4.3] Odporne wczytywanie plików: błędy formuł Excela (#REF!, #DIV/0!,
+#     #VALUE! itp.) są traktowane jak puste komórki (kolumna częściowo zepsuta
+#     jest pomijana, nie wywala całości). Gdy po oczyszczeniu nie ma danych
+#     liczbowych, użytkownik dostaje czytelny komunikat po polsku zamiast
+#     kryptycznego IndexError (nowy wyjątek BladDanychWejsciowych).
 #
 # NOWE W WERSJI 3:
 #  A. Ujednolicenie osi X: widma wzorcowe i nowe przechodzą przez TĘ SAMĄ
@@ -783,9 +788,40 @@ OPISY_AUGMENTACJI = {
 # FUNKCJE POMOCNICZE — DANE WEJŚCIOWE
 # =====================================================================
 
+# Wartości, które Excel wpisuje przy błędach formuł — traktujemy je jak puste.
+_EXCEL_BLEDY = {
+    "#REF!", "#DIV/0!", "#VALUE!", "#NAME?", "#N/A", "#NULL!", "#NUM!",
+    "#SPILL!", "#CALC!", "#GETTING_DATA", "#REF", "REF!",
+}
+
+
+class BladDanychWejsciowych(Exception):
+    """Czytelny błąd wczytywania danych (pokazywany użytkownikowi po polsku)."""
+    pass
+
+
 def inteligentne_pobranie_tabeli(df_raw):
+    # Zamień błędy Excela (#REF!, #DIV/0! itd.) na NaN — inaczej „zabetonują"
+    # kolumnę jako tekstową i cała tabela wyjdzie pusta po konwersji na liczby.
+    df_raw = df_raw.replace(list(_EXCEL_BLEDY), np.nan)
+    # Obcięcie białych znaków w komórkach tekstowych i ponowna zamiana wariantów
+    # błędów z ewentualnymi spacjami (np. " #REF! ").
+    df_raw = df_raw.map(
+        lambda v: (np.nan if isinstance(v, str) and v.strip().upper().rstrip("!")
+                   in {b.rstrip("!") for b in _EXCEL_BLEDY} else v)
+    )
+
     df_raw = df_raw.dropna(how="all", axis=0).dropna(how="all", axis=1)
     df_raw = df_raw.reset_index(drop=True)
+
+    if df_raw.shape[0] < 2 or df_raw.shape[1] < 2:
+        raise BladDanychWejsciowych(
+            "Po odrzuceniu pustych komórek i błędów Excela (#REF!, #DIV/0! itp.) "
+            "w arkuszu nie zostało dość danych. Sprawdź, czy plik nie zawiera "
+            "zerwanych odwołań (#REF!) zamiast liczb — otwórz go w Excelu i "
+            "zastąp formuły wartościami (Kopiuj → Wklej specjalnie → Wartości)."
+        )
+
     indeks_startu = 0
     for idx, row in df_raw.iterrows():
         if row.notna().sum() > 1:
@@ -801,7 +837,26 @@ def inteligentne_pobranie_tabeli(df_raw):
     df_czysty = df_czysty.reset_index(drop=True)
     df_czysty = df_czysty.apply(pd.to_numeric, errors="coerce")
     df_czysty = df_czysty.dropna(how="all", axis=1)
+
+    # Zabezpieczenie: jeśli po konwersji nie ma żadnej kolumny liczbowej,
+    # dajemy zrozumiały komunikat zamiast kryptycznego IndexError.
+    if df_czysty.shape[1] == 0:
+        raise BladDanychWejsciowych(
+            "Nie znaleziono ani jednej kolumny z danymi liczbowymi. Najczęstsza "
+            "przyczyna to błędy formuł w pliku (#REF!, #DIV/0!, #VALUE! itp.), "
+            "które zastąpiły liczby. Otwórz plik w Excelu, napraw lub usuń "
+            "zerwane odwołania i zapisz jako wartości, a następnie wgraj ponownie."
+        )
+
     df_czysty = df_czysty.dropna(subset=[df_czysty.columns[0]])
+
+    if df_czysty.shape[0] == 0:
+        raise BladDanychWejsciowych(
+            "Pierwsza kolumna (oś X) nie zawiera żadnych wartości liczbowych po "
+            "oczyszczeniu. Sprawdź, czy kolumna g-factor / osi X nie składa się "
+            "z błędów formuł lub tekstu."
+        )
+
     return df_czysty.reset_index(drop=True)
 
 
@@ -1189,8 +1244,18 @@ file_id = "default"
 if typ_zrodla == "Plik Excel (.xlsx)":
     uploaded_file = st.file_uploader("Wgraj plik Excel", type=["xlsx"])
     if uploaded_file is not None:
-        df_raw = pd.read_excel(uploaded_file, sheet_name=0, header=None)
-        df = inteligentne_pobranie_tabeli(df_raw)
+        try:
+            df_raw = pd.read_excel(uploaded_file, sheet_name=0, header=None)
+            df = inteligentne_pobranie_tabeli(df_raw)
+        except BladDanychWejsciowych as e:
+            st.error(f"⚠️ Nie udało się wczytać danych z pliku.\n\n{e}")
+            st.stop()
+        except Exception as e:
+            st.error(
+                "⚠️ Nie udało się odczytać pliku Excel. Sprawdź, czy to "
+                f"prawidłowy plik .xlsx z danymi.\n\nSzczegóły: {e}"
+            )
+            st.stop()
         file_id = f"local_{len(df_raw)}_{df_raw.shape[1]}_{uploaded_file.size}"
         try:
             excel_file = pd.ExcelFile(uploaded_file)
@@ -1221,6 +1286,9 @@ else:
                 gt_raw = sheets_dict[nazwy_arkuszy[1]]
                 gt_raw.columns = gt_raw.iloc[0]
                 df_expert_raw = gt_raw.iloc[1:].reset_index(drop=True)
+        except BladDanychWejsciowych as e:
+            st.error(f"⚠️ Nie udało się wczytać danych z arkusza.\n\n{e}")
+            st.stop()
         except Exception:
             st.error("Nie udało się pobrać danych ze struktur Google Sheets.")
 
