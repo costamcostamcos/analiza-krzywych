@@ -12,6 +12,12 @@
 #     rozwijana z tabelą typów, podglądem widm z punktami decyzyjnymi,
 #     eksportem CSV oraz — gdy dostępny Ground Truth — macierzą zgodności
 #     etykiet regułowych z podziałem eksperckim.
+#     [v4.1] Wygładzanie do wyboru: średnia ruchoma LUB Savitzky-Golay
+#     (zachowuje wysokość pików — bliżej praktyki EPR). Detekcja ekstremów
+#     do wyboru: prominencja amplitudowa LUB zmiana znaku pochodnej. Próg
+#     prominencji jest w bezwzględnych jednostkach sygnału (a.u.); obok
+#     wyświetlana jest szacowana σ szumu linii bazowej jako punkt odniesienia
+#     (sugerowany próg ≈ 3σ) i zarazem miara jakości widma.
 #
 # NOWE W WERSJI 3:
 #  A. Ujednolicenie osi X: widma wzorcowe i nowe przechodzą przez TĘ SAMĄ
@@ -269,13 +275,51 @@ def _reg_sort(g, y):
     return g[idx], y[idx]
 
 
-def _reg_smooth(y, window=7):
-    """Średnia ruchoma z nieparzystym oknem (wygładzenie szumu)."""
+def _reg_smooth(y, window=7, metoda="Średnia ruchoma"):
+    """Wygładza sygnał wybraną metodą.
+
+    - „Średnia ruchoma": prosty filtr pudełkowy (splot). Szybki, ale
+      spłaszcza i przesuwa piki — może zaniżać amplitudę ekstremów.
+    - „Savitzky-Golay": dopasowuje lokalnie wielomian (rząd 3). Zachowuje
+      wysokość i położenie pików znacznie lepiej — bliżej praktyki EPR.
+    """
     if window is None or window < 3:
-        return y
+        return np.asarray(y, dtype=float)
     window = window + 1 if window % 2 == 0 else window
+    y = np.asarray(y, dtype=float)
+    if window > len(y):
+        window = len(y) - 1 if len(y) % 2 == 0 else len(y)
+        if window < 3:
+            return y
+    if metoda == "Savitzky-Golay":
+        try:
+            from scipy.signal import savgol_filter
+            polyorder = min(3, window - 1)
+            return savgol_filter(y, window_length=window, polyorder=polyorder)
+        except Exception:
+            pass  # awaryjnie: średnia ruchoma
     kernel = np.ones(window) / window
     return np.convolve(y, kernel, mode="same")
+
+
+def reg_szum_sigma(g, y, g_lo=2.024, g_hi=2.030, smooth_window=7,
+                   metoda_smooth="Średnia ruchoma"):
+    """Szacuje odchylenie standardowe szumu linii bazowej.
+
+    Bierze fragment widma z dala od głównych sygnałów (domyślnie skrzydło
+    g ∈ [2.024; 2.030]), odejmuje jego wygładzoną wersję (usuwa ewentualny
+    trend/dryf bazy) i liczy σ rezyduów. To orientacyjna miara szumu — do
+    doboru progu prominencji (np. 3σ). Zwraca float albo None, gdy zakres
+    ma za mało punktów.
+    """
+    gs, ys = _reg_sort(g, y)
+    lo, hi = min(g_lo, g_hi), max(g_lo, g_hi)
+    maska = (gs >= lo) & (gs <= hi)
+    if maska.sum() < 5:
+        return None
+    seg = ys[maska]
+    baza = _reg_smooth(seg, min(smooth_window, len(seg)), metoda_smooth)
+    return float(np.std(seg - baza))
 
 
 def reg_value_at_g(g, y, g0):
@@ -284,55 +328,82 @@ def reg_value_at_g(g, y, g0):
     return float(np.interp(g0, gs, ys))
 
 
-def _reg_extremum(g, y, g_lo, g_hi, kind="min", smooth_window=7, prominence=0.0):
+def _reg_extremum(g, y, g_lo, g_hi, kind="min", smooth_window=7,
+                  prominence=0.0, metoda_smooth="Średnia ruchoma",
+                  metoda_ekstr="Prominencja amplitudowa"):
     """Czy w zakresie g ∈ (g_lo; g_hi) istnieje lokalne ekstremum danego typu?
 
-    Ekstremum musi leżeć wewnątrz okna (nie na brzegu) i odstawać od wartości
-    brzegowych o co najmniej `prominence` — to odsiewa ekstrema szumowe.
+    Dwie metody wykrywania:
+    - „Prominencja amplitudowa": ekstremum leży wewnątrz okna (nie na brzegu)
+      i wystaje ponad wartości brzegowe o co najmniej `prominence`. Prosta,
+      progowana amplitudowo.
+    - „Zmiana znaku pochodnej": ekstremum = punkt, w którym pierwsza pochodna
+      wygładzonego sygnału zmienia znak (klasyczny warunek min/max). `prominence`
+      działa tu jako dodatkowy filtr amplitudy odsiewający ekstrema szumowe.
     """
     gs, ys = _reg_sort(g, y)
     lo, hi = min(g_lo, g_hi), max(g_lo, g_hi)
     maska = (gs >= lo) & (gs <= hi)
     if maska.sum() < 5:
         raise ValueError(f"Za mało punktów w zakresie g=({lo}; {hi}).")
-    seg = _reg_smooth(ys, smooth_window)[maska]
-    if kind == "max":
-        seg = -seg
-    i = int(np.argmin(seg))
-    wewnatrz = 0 < i < len(seg) - 1
-    wystajace = (min(seg[0], seg[-1]) - seg[i]) >= prominence
+    seg = _reg_smooth(ys, smooth_window, metoda_smooth)[maska]
+    sygn = -seg if kind == "max" else seg  # zawsze szukamy MINIMUM w `sygn`
+
+    if metoda_ekstr == "Zmiana znaku pochodnej":
+        # Ekstremum tam, gdzie pochodna przechodzi z (-) na (+): dolina.
+        d = np.diff(sygn)
+        kandydaci = [k for k in range(1, len(sygn) - 1)
+                     if d[k - 1] < 0 <= d[k]]
+        for k in kandydaci:
+            # Filtr amplitudy: dolina musi wystawać ponad brzegi okna
+            if (min(sygn[0], sygn[-1]) - sygn[k]) >= prominence:
+                return True
+        return False
+
+    # Domyślnie: prominencja amplitudowa (jak dotychczas)
+    i = int(np.argmin(sygn))
+    wewnatrz = 0 < i < len(sygn) - 1
+    wystajace = (min(sygn[0], sygn[-1]) - sygn[i]) >= prominence
     return bool(wewnatrz and wystajace)
 
 
-def reg_klasyfikuj_nienapromienione(g, y, smooth_window=7, prominence=0.0):
+def reg_klasyfikuj_nienapromienione(g, y, smooth_window=7, prominence=0.0,
+                                    metoda_smooth="Średnia ruchoma",
+                                    metoda_ekstr="Prominencja amplitudowa"):
     """Drzewo Fig. 1A (próbki 0 Gy). Zwraca (typ, lista_kroków)."""
     sciezka = []
+    kw = dict(smooth_window=smooth_window, prominence=prominence,
+              metoda_smooth=metoda_smooth, metoda_ekstr=metoda_ekstr)
     f2000 = reg_value_at_g(g, y, 2.0000)
     sciezka.append(f"f(2.0000) = {f2000:.3e}")
     if f2000 < 0:
-        ma_min = _reg_extremum(g, y, 2.0040, 2.0001, "min", smooth_window, prominence)
+        ma_min = _reg_extremum(g, y, 2.0040, 2.0001, "min", **kw)
         sciezka.append(f"lokalne min w (2.0040; 2.0001): {ma_min}")
         return ("V" if ma_min else "III"), sciezka
     f20171 = reg_value_at_g(g, y, 2.0171)
     sciezka.append(f"f(2.0171) = {f20171:.3e}")
     if f20171 < 0:
         return "IVB", sciezka
-    ma_max = _reg_extremum(g, y, 2.0250, 2.0200, "max", smooth_window, prominence)
+    ma_max = _reg_extremum(g, y, 2.0250, 2.0200, "max", **kw)
     sciezka.append(f"lokalne max w (2.0250; 2.0200): {ma_max}")
     if ma_max:
         return "II", sciezka
-    ma_min = _reg_extremum(g, y, 1.9990, 1.9930, "min", smooth_window, prominence)
+    ma_min = _reg_extremum(g, y, 1.9990, 1.9930, "min", **kw)
     sciezka.append(f"lokalne min w (1.9990; 1.9930): {ma_min}")
     return ("I" if ma_min else "IVA"), sciezka
 
 
-def reg_klasyfikuj_napromienione(g, y, smooth_window=7, prominence=0.0):
+def reg_klasyfikuj_napromienione(g, y, smooth_window=7, prominence=0.0,
+                                 metoda_smooth="Średnia ruchoma",
+                                 metoda_ekstr="Prominencja amplitudowa"):
     """Drzewo Fig. 1B (próbki 10 Gy). IVA i IVB nierozróżnialne. Zwraca (typ, kroki)."""
     sciezka = []
+    kw = dict(smooth_window=smooth_window, prominence=prominence,
+              metoda_smooth=metoda_smooth, metoda_ekstr=metoda_ekstr)
     f2000 = reg_value_at_g(g, y, 2.0000)
     sciezka.append(f"f(2.0000) = {f2000:.3e}")
     if f2000 < 0:
-        ma_min = _reg_extremum(g, y, 2.0040, 2.0001, "min", smooth_window, prominence)
+        ma_min = _reg_extremum(g, y, 2.0040, 2.0001, "min", **kw)
         sciezka.append(f"lokalne min w (2.0040; 2.0001): {ma_min}")
         return ("V" if ma_min else "III"), sciezka
     f20171 = reg_value_at_g(g, y, 2.0171)
@@ -1554,10 +1625,16 @@ try:
             "Działa na tej samej ujednoliconej (rosnącej) osi g co reszta "
             "aplikacji. Zakłada preprocessing zbliżony do pracy (odjęcie tła "
             "rurki, liniowa korekcja bazy, normalizacja). Jeśli oś X jest w mT, "
-            "przelicz ją najpierw na g-factor. Progi znakowe f(g) mogą wymagać "
-            "dostrojenia dla innego spektrometru lub parametrów akwizycji."
+            "przelicz ją najpierw na g-factor. To rekonstrukcja logiki drzew z "
+            "rysunków pracy, nie oryginalny kod autorów — definicja ekstremum i "
+            "sposób filtracji nie są w pracy w pełni sprecyzowane, dlatego "
+            "wystawiono je jako parametry. Savitzky-Golay + detekcja przez "
+            "pochodną są zwykle bliższe praktyce EPR niż średnia ruchoma + "
+            "prominencja. Rozbieżności między metodami pojawiają się na widmach "
+            "granicznych — obejrzyj je na wykresie i w tabeli zgodności poniżej."
         )
 
+        # --- Wiersz 1: tryb + metody (wygładzanie, detekcja ekstremów) ---
         col_reg1, col_reg2, col_reg3 = st.columns(3)
         with col_reg1:
             reg_tryb = st.radio(
@@ -1568,18 +1645,70 @@ try:
                      "W trybie napromienionym typy IVA i IVB są nierozróżnialne.",
             )
         with col_reg2:
-            reg_okno = st.slider(
-                "Okno wygładzania:", min_value=3, max_value=21, value=7, step=2,
-                key="reg_okno",
-                help="Nieparzyste okno średniej ruchomej przy wykrywaniu "
-                     "lokalnych ekstremów (odsiewa szum).",
+            reg_metoda_smooth = st.radio(
+                "Metoda wygładzania:",
+                ["Średnia ruchoma", "Savitzky-Golay"],
+                key="reg_metoda_smooth",
+                help="Średnia ruchoma jest prosta, ale spłaszcza i przesuwa "
+                     "piki. Savitzky-Golay (wielomian 3. rzędu) zachowuje "
+                     "wysokość i położenie pików — bliżej praktyki EPR i "
+                     "pierwotnej metody.",
             )
         with col_reg3:
+            reg_metoda_ekstr = st.radio(
+                "Detekcja ekstremów:",
+                ["Prominencja amplitudowa", "Zmiana znaku pochodnej"],
+                key="reg_metoda_ekstr",
+                help="Prominencja: ekstremum musi wystawać ponad brzegi okna. "
+                     "Zmiana znaku pochodnej: klasyczny warunek min/max (pochodna "
+                     "przechodzi przez zero) + filtr amplitudy. Różne definicje "
+                     "mogą dać różny typ dla widm granicznych.",
+            )
+
+        # --- Wiersz 2: okno + prominencja ---
+        col_reg4, col_reg5 = st.columns(2)
+        with col_reg4:
+            reg_okno = st.slider(
+                "Okno wygładzania (liczba punktów):",
+                min_value=3, max_value=21, value=7, step=2,
+                key="reg_okno",
+                help="Nieparzyste okno filtra wygładzającego przy wykrywaniu "
+                     "lokalnych ekstremów (odsiewa szum).",
+            )
+        with col_reg5:
             reg_prom = st.number_input(
-                "Prominencja ekstremów (a.u.):", min_value=0.0, value=0.0,
-                format="%.2e", key="reg_prom",
-                help="Próg odsiewający ekstrema szumowe; sugerowane ~3σ szumu "
-                     "linii bazowej. 0 = brak filtra prominencji.",
+                "Próg prominencji (w jednostkach sygnału, a.u.):",
+                min_value=0.0, value=0.0, format="%.4g", key="reg_prom",
+                help="Bezwzględny próg amplitudy: ekstremum liczy się tylko, "
+                     "gdy wystaje ponad brzegi okna o co najmniej tę wartość. "
+                     "Jednostki są TAKIE SAME jak Twój sygnał (nie sigma!). "
+                     "0 = brak filtra. Sugestia: wpisz ~3× szacowaną σ szumu "
+                     "podaną poniżej.",
+            )
+
+        # --- Szacowanie σ szumu linii bazowej (skrzydło g ≈ 2.024–2.030) ---
+        # Daje punkt odniesienia do progu prominencji ORAZ samo w sobie jest
+        # informacją o jakości widma (poziom szumu tła).
+        sigmy = []
+        for i in range(n_krzywych):
+            s = reg_szum_sigma(x_ref_ujedn, macierz_wzorcowe_ujedn[i],
+                               smooth_window=reg_okno,
+                               metoda_smooth=reg_metoda_smooth)
+            if s is not None:
+                sigmy.append(s)
+        if sigmy:
+            sig_med = float(np.median(sigmy))
+            sig_min, sig_max = float(np.min(sigmy)), float(np.max(sigmy))
+            st.caption(
+                f"📉 Szacowana σ szumu linii bazowej (skrzydło g≈2.024–2.030): "
+                f"mediana **{sig_med:.4g}** a.u. (zakres {sig_min:.4g}–{sig_max:.4g} "
+                f"w zbiorze). Sugerowany próg prominencji ≈ 3σ = **{3*sig_med:.4g}** "
+                f"a.u. Wyższa σ = bardziej zaszumione widmo."
+            )
+        else:
+            st.caption(
+                "📉 Nie udało się oszacować σ szumu — brak punktów w oknie "
+                "g≈2.024–2.030 (sprawdź zakres osi g)."
             )
 
         reg_fn = (reg_klasyfikuj_nienapromienione
@@ -1594,7 +1723,9 @@ try:
             try:
                 typ, sciezka = reg_fn(x_ref_ujedn, y_widmo,
                                       smooth_window=reg_okno,
-                                      prominence=float(reg_prom))
+                                      prominence=float(reg_prom),
+                                      metoda_smooth=reg_metoda_smooth,
+                                      metoda_ekstr=reg_metoda_ekstr)
                 reg_typy.append(typ)
                 reg_wiersze.append({
                     "Widmo": str(nazwa),
