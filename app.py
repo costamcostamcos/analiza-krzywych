@@ -18,6 +18,13 @@
 #     prominencji jest w bezwzględnych jednostkach sygnału (a.u.); obok
 #     wyświetlana jest szacowana σ szumu linii bazowej jako punkt odniesienia
 #     (sugerowany próg ≈ 3σ) i zarazem miara jakości widma.
+#     [v4.2] Ranking skuteczności ocenia teraz STABILNOŚĆ: każda metoda jest
+#     uruchamiana na N ziarnach losowych, a wyniki podawane jako średnia ± σ.
+#     Metody deterministyczne (Ward, korelacyjna, PCA+Ward) mają σ≈0. Wykres
+#     porównawczy ma słupki błędów, tabela — kolumny σ i „Rozrzut σ", a
+#     podsumowanie wskazuje osobno metodę najskuteczniejszą i najstabilniejszą.
+#     Cel: odróżnić realną przewagę metody od szczęśliwego trafienia ziarna
+#     na małym zbiorze.
 #
 # NOWE W WERSJI 3:
 #  A. Ujednolicenie osi X: widma wzorcowe i nowe przechodzą przez TĘ SAMĄ
@@ -900,8 +907,11 @@ def _spectral_embedding(dane, n_komponentow, random_state=42):
 
 @st.cache_data(show_spinner=False)
 def uruchom_silnik_klastrowania(nazwa_metody, dane, k_grup, min_hdbscan=3,
-                                df_sygnaly_raw=None):
-    rs = KONFIG["RANDOM_STATE"]
+                                df_sygnaly_raw=None, seed=None):
+    # seed=None -> zachowanie jak dotąd (deterministyczne, KONFIG). Podanie
+    # seed pozwala rankingowi uruchomić tę samą metodę na różnych ziarnach
+    # i policzyć stabilność (średnia ± odchylenie).
+    rs = KONFIG["RANDOM_STATE"] if seed is None else int(seed)
 
     if nazwa_metody == "K-means":
         return KMeans(n_clusters=k_grup, random_state=rs, n_init=5).fit_predict(dane) + 1
@@ -1072,53 +1082,90 @@ def oblicz_leave_one_out(metoda, dane_loo, etykiety_gt, krzywe_raw,
     return wyniki_loo
 
 
-@st.cache_data(show_spinner="Obliczam ranking...")
+@st.cache_data(show_spinner="Obliczam ranking (wiele ziaren)...")
 def oblicz_ranking(dane, etykiety, krzywe_raw, metody_tuple, k,
-                   indeksy_oryginalow):
+                   indeksy_oryginalow, n_ziaren=5):
     """
-    Ranking wszystkich metod. Przy augmentacji predykcje są przycinane
-    do oryginalnych krzywych przed liczeniem ARI/NMI (POPRAWKA #6).
-    etykiety=None -> tylko silhouette (brak Ground Truth).
+    Ranking wszystkich metod z oceną STABILNOŚCI. Każda metoda jest
+    uruchamiana na `n_ziaren` różnych ziarnach losowych; raportujemy
+    średnią ± odchylenie standardowe każdej metryki. Metody deterministyczne
+    (Ward, korelacyjna, PCA+Ward) dadzą odchylenie ≈ 0 — to poprawne i jest
+    właśnie sygnałem, że są stabilne. Metody losowe (UMAP, K-means, GMM,
+    SOM, Spectral) ujawnią swój rozrzut.
+
+    Przy augmentacji predykcje są przycinane do oryginalnych krzywych przed
+    liczeniem ARI/NMI (POPRAWKA #6). etykiety=None -> tylko silhouette.
     """
     rekordy = []
     bledy = []
     idx_oryg = list(indeksy_oryginalow) if indeksy_oryginalow is not None else None
+    ziarna = [KONFIG["RANDOM_STATE"] + 7 * s for s in range(max(1, n_ziaren))]
 
     for m_nazwa in metody_tuple:
-        try:
-            pred = uruchom_silnik_klastrowania(
-                m_nazwa, dane, k, k, df_sygnaly_raw=krzywe_raw
-            )
-            pred = np.asarray(pred)
-            unikalne = np.unique(pred[pred > 0]) if 0 in pred else np.unique(pred)
-            if len(unikalne) < 2:
-                bledy.append(f"{m_nazwa}: mniej niż 2 klastry")
-                continue
+        ari_lista, nmi_lista, sil_lista = [], [], []
+        ostatni_blad = None
+        n_nieudanych = 0
 
-            rekord = {"Algorytm AI": m_nazwa}
+        for sd in ziarna:
+            try:
+                pred = uruchom_silnik_klastrowania(
+                    m_nazwa, dane, k, k, df_sygnaly_raw=krzywe_raw, seed=sd
+                )
+                pred = np.asarray(pred)
+                unikalne = np.unique(pred[pred > 0]) if 0 in pred else np.unique(pred)
+                if len(unikalne) < 2:
+                    n_nieudanych += 1
+                    ostatni_blad = "mniej niż 2 klastry"
+                    continue
 
-            # Silhouette na pełnym zbiorze (z pominięciem szumu HDBSCAN)
-            maska_ns = pred > 0
-            if maska_ns.sum() >= 2 and len(np.unique(pred[maska_ns])) >= 2:
-                m_sil = silhouette_score(dane[maska_ns], pred[maska_ns]) * 100
-            else:
-                m_sil = silhouette_score(dane, pred) * 100
-            rekord["Silhouette (%)"] = round(m_sil, 2)
+                # Silhouette na pełnym zbiorze (z pominięciem szumu HDBSCAN)
+                maska_ns = pred > 0
+                if maska_ns.sum() >= 2 and len(np.unique(pred[maska_ns])) >= 2:
+                    m_sil = silhouette_score(dane[maska_ns], pred[maska_ns]) * 100
+                else:
+                    m_sil = silhouette_score(dane, pred) * 100
+                sil_lista.append(m_sil)
 
-            if etykiety is not None:
-                # POPRAWKA: przy augmentacji porównujemy tylko oryginały
-                pred_gt = pred[idx_oryg] if idx_oryg is not None else pred
-                m_ari = adjusted_rand_score(list(etykiety), pred_gt) * 100
-                m_nmi = normalized_mutual_info_score(list(etykiety), pred_gt) * 100
-                rekord["ARI (%)"] = round(m_ari, 2)
-                rekord["NMI (%)"] = round(m_nmi, 2)
-                rekord["Średnia (%)"] = round((m_ari + m_nmi + m_sil) / 3, 2)
-            else:
-                rekord["Średnia (%)"] = round(m_sil, 2)
+                if etykiety is not None:
+                    pred_gt = pred[idx_oryg] if idx_oryg is not None else pred
+                    ari_lista.append(adjusted_rand_score(list(etykiety), pred_gt) * 100)
+                    nmi_lista.append(normalized_mutual_info_score(list(etykiety), pred_gt) * 100)
+            except Exception as e:
+                n_nieudanych += 1
+                ostatni_blad = str(e)
 
-            rekordy.append(rekord)
-        except Exception as e:
-            bledy.append(f"{m_nazwa}: {e}")
+        if not sil_lista:
+            bledy.append(f"{m_nazwa}: {ostatni_blad or 'brak wyników'}")
+            continue
+
+        rekord = {"Algorytm AI": m_nazwa}
+
+        def _sr_od(lista):
+            arr = np.asarray(lista, dtype=float)
+            return round(float(arr.mean()), 2), round(float(arr.std()), 2)
+
+        sil_sr, sil_od = _sr_od(sil_lista)
+        rekord["Silhouette (%)"] = sil_sr
+        rekord["Silhouette σ"] = sil_od
+
+        if etykiety is not None and ari_lista:
+            ari_sr, ari_od = _sr_od(ari_lista)
+            nmi_sr, nmi_od = _sr_od(nmi_lista)
+            rekord["ARI (%)"] = ari_sr
+            rekord["ARI σ"] = ari_od
+            rekord["NMI (%)"] = nmi_sr
+            rekord["NMI σ"] = nmi_od
+            rekord["Średnia (%)"] = round((ari_sr + nmi_sr + sil_sr) / 3, 2)
+            # Łączna niestabilność = pierwiastek ze średniej wariancji metryk
+            rekord["Rozrzut σ"] = round(
+                float(np.sqrt(np.mean([ari_od**2, nmi_od**2, sil_od**2]))), 2)
+        else:
+            rekord["Średnia (%)"] = sil_sr
+            rekord["Rozrzut σ"] = sil_od
+
+        rekord["Udane pow."] = f"{len(sil_lista)}/{len(ziarna)}"
+        rekordy.append(rekord)
+
     return rekordy, bledy
 
 
@@ -2773,9 +2820,20 @@ try:
         opis_metryk = ("ARI, NMI oraz Silhouette Score" if gt_dostepny
                        else "Silhouette Score (brak Ground Truth — bez ARI/NMI)")
         st.markdown(
-            f"Ranking uruchamia wszystkie metody klasteryzacji na tych samych "
-            f"danych i porównuje {opis_metryk}. Wyniki są cachowane — ponowne "
-            f"otwarcie jest natychmiastowe."
+            f"Ranking uruchamia każdą metodę **wielokrotnie** (na różnych "
+            f"ziarnach losowych) i porównuje {opis_metryk} jako **średnią ± "
+            f"odchylenie (σ)**. Kolumna **σ** i **Rozrzut σ** mówią o "
+            f"STABILNOŚCI: metoda z wysokim wynikiem, ale dużym σ jest mniej "
+            f"godna zaufania niż nieco słabsza, lecz powtarzalna. Metody "
+            f"deterministyczne (Ward, korelacyjna, PCA+Ward) mają σ≈0 z "
+            f"definicji — to zaleta, nie brak. Wyniki są cachowane."
+        )
+        st.caption(
+            "⚠️ Dlaczego to ważne: na małym zbiorze pojedynczy wynik ARI potrafi "
+            "być dziełem przypadku (szczęśliwe ziarno). Dopiero rozrzut po wielu "
+            "ziarnach pokazuje, czy przewaga metody jest realna, czy losowa. "
+            "Jeśli dobierasz metodę pod ten sam podział ekspercki, traktuj wysoki "
+            "wynik ostrożnie — to nie jest już niezależny test."
         )
 
         METODY_SZYBKIE = [
@@ -2789,12 +2847,23 @@ try:
             "BGMM (Bayesowski GMM)",
         ]
 
-        tryb_rankingu = st.radio(
-            "Zakres rankingu:",
-            ["⚡ Szybki (8 metod)", "🔬 Pełny (wszystkie metody)"],
-            horizontal=True,
-            key="tryb_rankingu",
-        )
+        col_tr, col_zi = st.columns([2, 1])
+        with col_tr:
+            tryb_rankingu = st.radio(
+                "Zakres rankingu:",
+                ["⚡ Szybki (8 metod)", "🔬 Pełny (wszystkie metody)"],
+                horizontal=True,
+                key="tryb_rankingu",
+            )
+        with col_zi:
+            n_ziaren_rank = st.slider(
+                "Liczba ziaren (powtórzeń):", min_value=1, max_value=15,
+                value=5, key="n_ziaren_rank",
+                help="Ile razy uruchomić każdą metodę na różnych ziarnach "
+                     "losowych. Więcej ziaren = pewniejsza ocena stabilności, "
+                     "ale dłuższe liczenie. Metody deterministyczne i tak dadzą "
+                     "ten sam wynik za każdym razem.",
+            )
         lista_do_rankingu = (METODY_SZYBKIE if "Szybki" in tryb_rankingu
                              else lista_metod)
 
@@ -2806,6 +2875,7 @@ try:
             tuple(lista_do_rankingu),
             liczba_grup,
             tuple(indeksy_oryginalow) if indeksy_oryginalow is not None else None,
+            n_ziaren=n_ziaren_rank,
         )
 
         if bledy_rankingu:
@@ -2821,7 +2891,7 @@ try:
             metryki = [c for c in ["ARI (%)", "NMI (%)", "Silhouette (%)"]
                        if c in df_lb.columns]
 
-            klucz_sel = f"ranking_selekcja_{tryb_rankingu}_{liczba_grup}"
+            klucz_sel = f"ranking_selekcja_{tryb_rankingu}_{liczba_grup}_{n_ziaren_rank}"
             if (klucz_sel not in st.session_state
                     or len(st.session_state[klucz_sel]) != len(df_lb)):
                 st.session_state[klucz_sel] = [False] * len(df_lb)
@@ -2829,7 +2899,8 @@ try:
             df_lb.insert(0, "Wybierz", st.session_state[klucz_sel])
 
             st.caption("Zaznacz metody które chcesz porównać, następnie kliknij "
-                       "**Porównaj**.")
+                       "**Porównaj**. Kolumny **σ** to odchylenie po ziarnach "
+                       "(mniej = stabilniej). **Rozrzut σ** = łączna niestabilność.")
 
             konfiguracja_kolumn = {
                 "Wybierz": st.column_config.CheckboxColumn("✔", width="small"),
@@ -2838,9 +2909,28 @@ try:
                                                              disabled=True,
                                                              format="%.2f"),
             }
+            # Metryki główne + ich odchylenia
             for m in metryki:
                 konfiguracja_kolumn[m] = st.column_config.NumberColumn(
                     m, disabled=True, format="%.2f"
+                )
+                kol_sigma = m.replace(" (%)", " σ")
+                if kol_sigma in df_lb.columns:
+                    konfiguracja_kolumn[kol_sigma] = st.column_config.NumberColumn(
+                        kol_sigma, disabled=True, format="%.2f",
+                        help="Odchylenie standardowe tej metryki po ziarnach "
+                             "losowych. Mniejsze = bardziej powtarzalne.",
+                    )
+            if "Rozrzut σ" in df_lb.columns:
+                konfiguracja_kolumn["Rozrzut σ"] = st.column_config.NumberColumn(
+                    "Rozrzut σ", disabled=True, format="%.2f",
+                    help="Łączna niestabilność metody (pierwiastek ze średniej "
+                         "wariancji metryk). Im mniej, tym pewniejszy wynik.",
+                )
+            if "Udane pow." in df_lb.columns:
+                konfiguracja_kolumn["Udane pow."] = st.column_config.TextColumn(
+                    "Udane pow.", disabled=True,
+                    help="Ile ziaren dało poprawny podział (≥2 klastry).",
                 )
 
             df_edytowalny = st.data_editor(
@@ -2892,14 +2982,21 @@ try:
 
                     metryki_por = [c for c in ["ARI (%)", "NMI (%)", "Silhouette (%)"]
                                    if c in df_por.columns]
+                    # Mapowanie metryka -> kolumna odchylenia (dla error bars)
+                    sigma_kol = {"ARI (%)": "ARI σ", "NMI (%)": "NMI σ",
+                                 "Silhouette (%)": "Silhouette σ"}
                     fig_por = go.Figure()
                     for idx, row_por in df_por.iterrows():
+                        bledy_y = [float(row_por.get(sigma_kol.get(m, ""), 0) or 0)
+                                   for m in metryki_por]
                         fig_por.add_trace(go.Bar(
                             name=row_por["Algorytm AI"],
                             x=metryki_por,
                             y=[row_por[m] for m in metryki_por],
+                            error_y=dict(type="data", array=bledy_y, visible=True,
+                                         thickness=1.3, width=4),
                             marker_color=PLOTLY_KOLORY[idx % 10],
-                            text=[f"{row_por[m]:.1f}%" for m in metryki_por],
+                            text=[f"{row_por[m]:.1f}" for m in metryki_por],
                             textposition="outside",
                         ))
                     fig_por.update_layout(
@@ -2907,10 +3004,15 @@ try:
                         height=380,
                         margin=dict(l=10, r=10, t=30, b=10),
                         legend=dict(orientation="h", yanchor="bottom", y=1.02),
-                        yaxis=dict(range=[0, 115], title="Wartość (%)"),
+                        yaxis=dict(range=[0, 115], title="Wartość (%) ± σ"),
                         xaxis=dict(title="Metryka"),
                     )
                     st.plotly_chart(fig_por, use_container_width=True)
+                    st.caption(
+                        "Wąsy błędów = odchylenie standardowe po ziarnach. "
+                        "Nakładające się wąsy dwóch metod oznaczają, że ich "
+                        "różnica może być nieistotna (mieści się w rozrzucie losowym)."
+                    )
 
                     df_styl = df_por.set_index("Algorytm AI")
 
@@ -2918,16 +3020,31 @@ try:
                         return ["background-color: #d4edda; font-weight: bold"
                                 if v == s.max() else "" for v in s]
 
+                    fmt_por = {m: "{:.2f}" for m in metryki_por + ["Średnia (%)"]}
+                    for kol in ["ARI σ", "NMI σ", "Silhouette σ", "Rozrzut σ"]:
+                        if kol in df_styl.columns:
+                            fmt_por[kol] = "{:.2f}"
                     st.dataframe(
                         df_styl.style
                         .apply(podswietl_max, subset=metryki_por)
-                        .format({m: "{:.2f}%" for m in metryki_por + ["Średnia (%)"]}),
+                        .format(fmt_por),
                         use_container_width=True,
                     )
 
                     najlepsza = df_por.loc[df_por["Średnia (%)"].idxmax(),
                                            "Algorytm AI"]
-                    st.success(f"🏆 Najlepsza metoda w porównaniu: **{najlepsza}**")
+                    st.success(f"🏆 Najwyższa średnia w porównaniu: **{najlepsza}**")
+                    # Najstabilniejsza = najmniejszy Rozrzut σ (jeśli dostępny)
+                    if "Rozrzut σ" in df_por.columns and len(df_por) > 1:
+                        najstab = df_por.loc[df_por["Rozrzut σ"].idxmin(),
+                                             "Algorytm AI"]
+                        if najstab != najlepsza:
+                            st.info(
+                                f"🎯 Najstabilniejsza (najmniejszy rozrzut): "
+                                f"**{najstab}**. Jeśli różnica średnich jest "
+                                f"mniejsza niż σ, stabilność może być lepszym "
+                                f"kryterium wyboru niż sam wynik."
+                            )
 
                     if st.button("✖️ Zamknij porównanie", key="btn_zamknij_por"):
                         st.session_state["ranking_porownanie_aktywne"] = False
