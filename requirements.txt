@@ -1,15 +1,19 @@
 streamlit
 pandas
-numpy
+# numpy PRZYPIĘTE do <2.3: numba sięga do wewnętrznych struktur C NumPy i na
+# świeżo wydanej numpy 2.4.6 segfaultowała PRZY STARCIE (crash sekundy po
+# uruchomieniu serwera, odporny na reboot). numpy<2.3 daje 2.2.x — wersję,
+# na której numba jest stabilna. Bez tego przypięcia każdy build łapie inną
+# numpy i apka bywa niestabilna.
+numpy<2.3
 matplotlib
 plotly
 scikit-learn
 scipy
 openpyxl
-# UMAP — przywrócony na wersjach z gotowymi wheelami dla Pythona 3.12.
-# Kluczowe: NIE przypinać starego umap-learn==0.5.12 (ciągnął numba==0.53.1
-# i llvmlite==0.36.0, które nie działają na 3.12 i wywalały build/segfault).
-# Poniższe minimalne wersje mają prekompilowane wheele cp312 — bez kompilacji.
+# UMAP — na wersjach z gotowymi wheelami dla Pythona 3.12.
+# NIE przypinać starego umap-learn==0.5.12 (ciągnął numba==0.53.1 i
+# llvmlite==0.36.0, które nie działają na 3.12). Poniższe mają wheele cp312.
 umap-learn>=0.5.7
 numba>=0.60
 llvmlite>=0.43
