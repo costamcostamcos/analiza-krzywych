@@ -36,6 +36,12 @@
 #     mają limit 3 ziaren, lekkie losowe pełne N. Pamięć zwalniana (gc) po każdej
 #     metodzie. Efekt: przy 17 metodach × N=5 liczba uruchomień silnika spadła
 #     z 85 do 43 (ciężkie z 40 do 18) — bez utraty wartości oceny stabilności.
+#     [v4.5] Oś g-factor rysowana MALEJĄCO w prawo na wszystkich wykresach widm
+#     (konwencja EPR — pole magnetyczne rośnie w prawo). Dotyczy wykresów w
+#     aplikacji, obrazków PNG oraz natywnych wykresów w eksporcie do Excela.
+#     To zmiana wyłącznie wizualna — dane i obliczenia (klasyfikacja regułowa,
+#     klastrowanie, interpolacja) nadal działają na rosnącej siatce g. Wykresy
+#     bez osi g (sugestia K, porównanie metod) pozostają bez zmian.
 #
 # NOWE W WERSJI 3:
 #  A. Ujednolicenie osi X: widma wzorcowe i nowe przechodzą przez TĘ SAMĄ
@@ -519,6 +525,7 @@ def _png_krzywe(x, krzywe_df, numery_grup, kolory_hex, dpi=300):
     ax.set_xlabel("Oś X"); ax.set_ylabel("Sygnał")
     ax.legend(fontsize=7, framealpha=0.85)
     ax.grid(True, color="#e0e0e0", linewidth=0.5)
+    ax.invert_xaxis()  # oś g-factor malejąca w prawo — konwencja EPR
     fig.tight_layout()
     buf = io.BytesIO(); fig.savefig(buf, format="png", dpi=dpi)
     plt.close(fig); buf.seek(0)
@@ -540,6 +547,7 @@ def _png_profile(x, krzywe_df, numery_grup, kolory_hex, dpi=300):
     ax.set_xlabel("Oś X"); ax.set_ylabel("Sygnał (średnia ±1σ)")
     ax.legend(fontsize=7, framealpha=0.85)
     ax.grid(True, color="#e0e0e0", linewidth=0.5)
+    ax.invert_xaxis()  # oś g-factor malejąca w prawo — konwencja EPR
     fig.tight_layout()
     buf = io.BytesIO(); fig.savefig(buf, format="png", dpi=dpi)
     plt.close(fig); buf.seek(0)
@@ -643,6 +651,7 @@ def _png_klasyfikacja(x_ref, macierz_wzorc_ujedn, klasy_ref,
         ax.set_xlabel("Oś X (g-factor)"); ax.set_ylabel("Sygnał")
         ax.legend(fontsize=7, framealpha=0.85)
         ax.grid(True, color="#e0e0e0", linewidth=0.5)
+        ax.invert_xaxis()  # oś g-factor malejąca w prawo — konwencja EPR
         fig.tight_layout()
         buf = io.BytesIO(); fig.savefig(buf, format="png", dpi=dpi)
         plt.close(fig); buf.seek(0)
@@ -675,6 +684,8 @@ def _wykres_excel_klasyfikacja(ws, n_pkt, kolory_serii, style_serii,
     chart.y_axis.title = "Sygnał"
     chart.x_axis.delete = False
     chart.y_axis.delete = False
+    # Oś g-factor malejąca w prawo — konwencja EPR
+    chart.x_axis.scaling.orientation = "maxMin"
 
     dane = Reference(ws, min_col=2, max_col=1 + n_serii,
                      min_row=1, max_row=1 + n_pkt)
@@ -1938,8 +1949,9 @@ try:
                                       line_color="gray", opacity=0.5)
                 fig_reg.update_layout(
                     height=360, margin=dict(l=10, r=10, t=10, b=10),
+                    # Oś g-factor malejąca w prawo — konwencja EPR
                     xaxis=dict(title="g-factor", showgrid=True,
-                               gridcolor="#e0e0e0"),
+                               gridcolor="#e0e0e0", autorange="reversed"),
                     yaxis=dict(title="Sygnał EPR (a.u.)", showgrid=True,
                                gridcolor="#e0e0e0"),
                     legend=dict(orientation="h", yanchor="bottom", y=1.02,
@@ -2152,7 +2164,8 @@ try:
             margin=dict(l=10, r=10, t=10, b=10),
             legend=dict(groupclick="toggleitem",
                         bgcolor="rgba(255,255,255,0.8)", borderwidth=1),
-            xaxis=dict(showgrid=True, gridcolor="#e0e0e0"),
+            # Oś g-factor malejąca w prawo — konwencja EPR (pole rośnie w prawo)
+            xaxis=dict(showgrid=True, gridcolor="#e0e0e0", autorange="reversed"),
             yaxis=dict(showgrid=True, gridcolor="#e0e0e0"),
             hovermode="closest",
         )
@@ -2217,7 +2230,8 @@ try:
         height=420,
         margin=dict(l=10, r=10, t=10, b=10),
         legend=dict(bgcolor="rgba(255,255,255,0.8)", borderwidth=1),
-        xaxis=dict(showgrid=True, gridcolor="#e0e0e0"),
+        # Oś g-factor malejąca w prawo — konwencja EPR
+        xaxis=dict(showgrid=True, gridcolor="#e0e0e0", autorange="reversed"),
         yaxis=dict(showgrid=True, gridcolor="#e0e0e0"),
         hovermode="closest",
     )
@@ -2336,6 +2350,8 @@ try:
                         chart_p.height = 10; chart_p.width = 18
                         chart_p.x_axis.title = "Oś X"; chart_p.y_axis.title = "Sygnał"
                         chart_p.x_axis.delete = False; chart_p.y_axis.delete = False
+                        # Oś g-factor malejąca w prawo — konwencja EPR
+                        chart_p.x_axis.scaling.orientation = "maxMin"
                         cats_p = Reference(ark_prof, min_col=1, min_row=2,
                                            max_row=1 + len(df_xy_profile))
                         kolumny_srednie = list(range(2, df_xy_profile.shape[1] + 1, 3))
@@ -2763,7 +2779,9 @@ try:
                             margin=dict(l=10, r=10, t=10, b=10),
                             legend=dict(bgcolor="rgba(255,255,255,0.8)",
                                         borderwidth=1),
-                            xaxis=dict(showgrid=True, gridcolor="#e0e0e0"),
+                            # Oś g-factor malejąca w prawo — konwencja EPR
+                            xaxis=dict(showgrid=True, gridcolor="#e0e0e0",
+                                       autorange="reversed"),
                             yaxis=dict(showgrid=True, gridcolor="#e0e0e0"),
                             hovermode="closest",
                         )
