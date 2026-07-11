@@ -30,6 +30,12 @@
 #     jest pomijana, nie wywala całości). Gdy po oczyszczeniu nie ma danych
 #     liczbowych, użytkownik dostaje czytelny komunikat po polsku zamiast
 #     kryptycznego IndexError (nowy wyjątek BladDanychWejsciowych).
+#     [v4.4] Naprawiono segmentation fault (crash OOM) przy rankingu w trybie
+#     „Pełny". Ranking wielo-ziarnowy dobiera teraz liczbę ziaren per metoda:
+#     deterministyczne liczą się RAZ (σ=0), ciężkie (UMAP/Spectral/SOM/Konsensus)
+#     mają limit 3 ziaren, lekkie losowe pełne N. Pamięć zwalniana (gc) po każdej
+#     metodzie. Efekt: przy 17 metodach × N=5 liczba uruchomień silnika spadła
+#     z 85 do 43 (ciężkie z 40 do 18) — bez utraty wartości oceny stabilności.
 #
 # NOWE W WERSJI 3:
 #  A. Ujednolicenie osi X: widma wzorcowe i nowe przechodzą przez TĘ SAMĄ
@@ -126,6 +132,7 @@
 # =====================================================================
 
 import io
+import gc
 
 import numpy as np
 import pandas as pd
@@ -1142,11 +1149,16 @@ def oblicz_ranking(dane, etykiety, krzywe_raw, metody_tuple, k,
                    indeksy_oryginalow, n_ziaren=5):
     """
     Ranking wszystkich metod z oceną STABILNOŚCI. Każda metoda jest
-    uruchamiana na `n_ziaren` różnych ziarnach losowych; raportujemy
-    średnią ± odchylenie standardowe każdej metryki. Metody deterministyczne
-    (Ward, korelacyjna, PCA+Ward) dadzą odchylenie ≈ 0 — to poprawne i jest
-    właśnie sygnałem, że są stabilne. Metody losowe (UMAP, K-means, GMM,
-    SOM, Spectral) ujawnią swój rozrzut.
+    uruchamiana na kilku ziarnach; raportujemy średnią ± odchylenie.
+
+    OCHRONA PAMIĘCI (kluczowe na Streamlit Cloud, ~1 GB):
+    - Metody DETERMINISTYCZNE (Ward, PCA+Ward, korelacyjna, NMF) liczone są
+      tylko RAZ — dają σ=0 z definicji, więc N przebiegów to marnotrawstwo.
+    - Metody CIĘŻKIE (UMAP, Spectral, SOM) dostają ograniczoną liczbę ziaren
+      (max 3), bo to one zjadają pamięć — kilkanaście ich instancji naraz
+      wywoływało segmentation fault (crash OOM w numbie/UMAP).
+    - Lekkie losowe (K-means, GMM, BGMM) dostają pełne N ziaren.
+    - Pamięć jest zwalniana (gc) po każdej metodzie.
 
     Przy augmentacji predykcje są przycinane do oryginalnych krzywych przed
     liczeniem ARI/NMI (POPRAWKA #6). etykiety=None -> tylko silhouette.
@@ -1154,9 +1166,23 @@ def oblicz_ranking(dane, etykiety, krzywe_raw, metody_tuple, k,
     rekordy = []
     bledy = []
     idx_oryg = list(indeksy_oryginalow) if indeksy_oryginalow is not None else None
-    ziarna = [KONFIG["RANDOM_STATE"] + 7 * s for s in range(max(1, n_ziaren))]
+    n_ziaren = max(1, int(n_ziaren))
+
+    # Klasyfikacja metody -> ile ziaren realnie potrzebuje.
+    _DETERMINISTYCZNE = ("metoda Warda", "PCA + Hierarchiczna", "Korelacyjna",
+                         "NMF", "Filtrowanie szumów (Rolling Mean)")
+    _CIEZKIE = ("UMAP", "Spectral", "SOM", "Konsensusowe", "K-Shape")
+
+    def _ile_ziaren(nazwa):
+        if any(d in nazwa for d in _DETERMINISTYCZNE):
+            return 1                      # deterministyczna: σ=0, jeden przebieg
+        if any(c in nazwa for c in _CIEZKIE):
+            return min(n_ziaren, 3)       # ciężka: limit dla ochrony pamięci
+        return n_ziaren                   # lekka losowa: pełne N
 
     for m_nazwa in metody_tuple:
+        ziarna = [KONFIG["RANDOM_STATE"] + 7 * s
+                  for s in range(_ile_ziaren(m_nazwa))]
         ari_lista, nmi_lista, sil_lista = [], [], []
         ostatni_blad = None
         n_nieudanych = 0
@@ -1188,6 +1214,8 @@ def oblicz_ranking(dane, etykiety, krzywe_raw, metody_tuple, k,
             except Exception as e:
                 n_nieudanych += 1
                 ostatni_blad = str(e)
+
+        gc.collect()  # zwolnij pamięć po każdej metodzie (ochrona przed OOM)
 
         if not sil_lista:
             bledy.append(f"{m_nazwa}: {ostatni_blad or 'brak wyników'}")
@@ -2903,6 +2931,13 @@ try:
             "Jeśli dobierasz metodę pod ten sam podział ekspercki, traktuj wysoki "
             "wynik ostrożnie — to nie jest już niezależny test."
         )
+        st.caption(
+            "🛡️ Ochrona pamięci: metody deterministyczne (Ward, PCA+Ward, "
+            "korelacyjna, NMF) liczone są raz (σ=0 z definicji), a ciężkie "
+            "(UMAP, Spectral, SOM) mają ograniczoną liczbę ziaren — dlatego w "
+            "kolumnie Udane pow. zobaczysz różne mianowniki. To celowe: chroni "
+            "przed przekroczeniem pamięci na Streamlit Cloud."
+        )
 
         METODY_SZYBKIE = [
             "Hierarchiczna Aglomeracyjna (metoda Warda)",
@@ -2929,8 +2964,9 @@ try:
                 value=5, key="n_ziaren_rank",
                 help="Ile razy uruchomić każdą metodę na różnych ziarnach "
                      "losowych. Więcej ziaren = pewniejsza ocena stabilności, "
-                     "ale dłuższe liczenie. Metody deterministyczne i tak dadzą "
-                     "ten sam wynik za każdym razem.",
+                     "ale dłuższe liczenie. Metody deterministyczne liczą się "
+                     "raz, a ciężkie (UMAP/Spectral/SOM) mają limit 3 ziaren "
+                     "dla ochrony pamięci — niezależnie od tego suwaka.",
             )
         lista_do_rankingu = (METODY_SZYBKIE if "Szybki" in tryb_rankingu
                              else lista_metod)
