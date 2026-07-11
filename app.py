@@ -42,6 +42,14 @@
 #     To zmiana wyłącznie wizualna — dane i obliczenia (klasyfikacja regułowa,
 #     klastrowanie, interpolacja) nadal działają na rosnącej siatce g. Wykresy
 #     bez osi g (sugestia K, porównanie metod) pozostają bez zmian.
+#     [v4.6] Porządki: przestarzały parametr use_container_width=True zastąpiony
+#     przez width='stretch' we wszystkich 26 miejscach (wykresy, tabele, przyciski)
+#     — usuwa ostrzeżenia deprecation z logów i zabezpiecza przed przyszłym
+#     usunięciem parametru przez Streamlit. Zamianę przetestowano na wersji 1.59.1.
+#     Usunięto też nieużywany tooltip sidebara (wstrzyknięcie JS przez
+#     components.html) — nie działał, generował ostrzeżenie deprecation i sięgał
+#     do window.parent.document (kruche). Stylizacja przycisku sidebara (pasek
+#     „Grupy Wzorcowe") została — to czysty CSS, bez JS. Import components usunięty.
 #
 # NOWE W WERSJI 3:
 #  A. Ujednolicenie osi X: widma wzorcowe i nowe przechodzą przez TĘ SAMĄ
@@ -147,7 +155,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.cluster import KMeans, HDBSCAN, SpectralClustering
@@ -1351,7 +1358,7 @@ try:
             f"Wykryto **{n_krzywych}** krzywych po **{len(df)}** punktów. "
             f"Pierwsza kolumna (`{df.columns[0]}`) traktowana jako oś X."
         )
-        st.dataframe(df.head(8), use_container_width=True)
+        st.dataframe(df.head(8), width='stretch')
 
     # -----------------------------------------------------------------
     # LISTY METOD I PREPROCESSINGU
@@ -1535,7 +1542,7 @@ try:
             edited_gt = st.data_editor(
                 st.session_state["tabela_editor_state"],
                 hide_index=True,
-                use_container_width=True,
+                width='stretch',
                 disabled=["Krzywa"],
                 key=f"sidebar_editor_{file_id}",
                 column_config={
@@ -1558,8 +1565,8 @@ try:
             )
 
     # -----------------------------------------------------------------
-    # Stylizacja sidebara + tooltip (best-effort: hack na data-testid,
-    # może przestać działać po aktualizacji Streamlita — degraduje bez błędu)
+    # Stylizacja sidebara: niebieski pasek „Grupy Wzorcowe" na zwiniętym
+    # przycisku + kursory wskazujące na kontrolkach. Czysty CSS (bez JS).
     # -----------------------------------------------------------------
     st.markdown("""
     <style>
@@ -1590,67 +1597,11 @@ try:
     [data-testid="stRadio"] label,
     button, select, [role="button"],
     [data-baseweb="select"] { cursor: pointer !important; }
-    #sidebar-tooltip {
-        position: fixed;
-        background: #1a1a2e;
-        color: #fff;
-        padding: 7px 12px;
-        border-radius: 7px;
-        font-size: 13px;
-        font-family: sans-serif;
-        white-space: nowrap;
-        pointer-events: none;
-        z-index: 9999999;
-        opacity: 0;
-        transition: opacity 0.18s ease;
-        box-shadow: 0 3px 12px rgba(0,0,0,0.35);
-    }
-    #sidebar-tooltip::before {
-        content: '';
-        position: absolute;
-        left: -6px; top: 50%;
-        transform: translateY(-50%);
-        border: 6px solid transparent;
-        border-right-color: #1a1a2e;
-        border-left: 0;
-    }
     [data-testid="stAppViewContainer"] > [data-testid="stMain"] {
         transition: margin-left 0.3s ease;
     }
     </style>
     """, unsafe_allow_html=True)
-
-    components.html("""
-    <script>
-    (function() {
-        try {
-            var doc = window.parent.document;
-            var old = doc.getElementById('sidebar-tooltip');
-            if (old) old.remove();
-            var tip = doc.createElement('div');
-            tip.id = 'sidebar-tooltip';
-            tip.textContent = '📋 Otwórz panel Grupy Wzorcowe';
-            doc.body.appendChild(tip);
-            function showTooltip(e) {
-                var rect = e.currentTarget.getBoundingClientRect();
-                tip.style.left = (rect.right + 12) + 'px';
-                tip.style.top = (rect.top + rect.height / 2 - 16) + 'px';
-                tip.style.opacity = '1';
-            }
-            function hideTooltip() { tip.style.opacity = '0'; }
-            function attachTooltip() {
-                var btn = doc.querySelector('[data-testid="collapsedControl"]');
-                if (!btn) { setTimeout(attachTooltip, 300); return; }
-                btn.removeEventListener('mouseenter', showTooltip);
-                btn.removeEventListener('mouseleave', hideTooltip);
-                btn.addEventListener('mouseenter', showTooltip);
-                btn.addEventListener('mouseleave', hideTooltip);
-            }
-            attachTooltip();
-        } catch (err) { /* sandbox bez dostępu do parenta — cicha degradacja */ }
-    })();
-    </script>
-    """, height=0)
 
     # =================================================================
     # WSPÓŁDZIELONA STANDARYZACJA (liczona raz)
@@ -1742,7 +1693,7 @@ try:
             fig_k.update_layout(height=480, showlegend=False,
                                 margin=dict(l=10, r=10, t=40, b=10))
             fig_k.update_xaxes(title_text="K", dtick=1)
-            st.plotly_chart(fig_k, use_container_width=True)
+            st.plotly_chart(fig_k, width='stretch')
             st.caption(
                 "\U0001f534 Czerwony punkt = sugerowane K. "
                 "Kneedle to geometryczna metoda wyznaczania 'kolana' krzywej inercji \u2014 "
@@ -1903,7 +1854,7 @@ try:
         col_reg_tab, col_reg_wyk = st.columns([3, 2])
         with col_reg_tab:
             st.markdown("##### 📋 Przypisane typy:")
-            st.dataframe(df_reg, hide_index=True, use_container_width=True)
+            st.dataframe(df_reg, hide_index=True, width='stretch')
             licznosci_typ = pd.Series(reg_typy).value_counts()
             st.caption("Liczność typów: " + ", ".join(
                 f"{t}: {n}" for t, n in licznosci_typ.items()))
@@ -1923,7 +1874,7 @@ try:
                 data=csv_reg,
                 file_name="klasyfikacja_regulowa_epr.csv",
                 mime="text/csv",
-                use_container_width=True,
+                width='stretch',
             )
 
         with col_reg_wyk:
@@ -1958,7 +1909,7 @@ try:
                                 bgcolor="rgba(255,255,255,0.8)"),
                     hovermode="closest",
                 )
-                st.plotly_chart(fig_reg, use_container_width=True)
+                st.plotly_chart(fig_reg, width='stretch')
                 st.caption(
                     "Kropkowane pionowe linie: punkty g = 2.0000, 2.0043, 2.0171 "
                     "użyte w drzewie decyzyjnym."
@@ -1972,7 +1923,7 @@ try:
                 pd.Series([str(e) for e in etykiety_eksperta], name="Grupa ekspercka"),
                 pd.Series(reg_typy, name="Typ regułowy"),
             )
-            st.dataframe(df_krzyz, use_container_width=True)
+            st.dataframe(df_krzyz, width='stretch')
             st.caption(
                 "Tabela krzyżowa: ile widm z każdej grupy eksperckiej trafiło "
                 "do poszczególnych typów regułowych. Pozwala sprawdzić, czy "
@@ -2169,7 +2120,7 @@ try:
             yaxis=dict(showgrid=True, gridcolor="#e0e0e0"),
             hovermode="closest",
         )
-        st.plotly_chart(fig1, use_container_width=True)
+        st.plotly_chart(fig1, width='stretch')
 
     # =================================================================
     # WYKRES 2: PROFILE MODELOWE (ŚREDNIE + CIEŃ WARIANCJI)
@@ -2235,7 +2186,7 @@ try:
         yaxis=dict(showgrid=True, gridcolor="#e0e0e0"),
         hovermode="closest",
     )
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width='stretch')
 
     # =================================================================
     # SKŁAD KLASTRÓW + EKSPORT
@@ -2284,7 +2235,7 @@ try:
             data=csv_bytes_sb,
             file_name=f"klastry_{metoda[:15].replace(' ', '_')}.csv",
             mime="text/csv",
-            use_container_width=True,
+            width='stretch',
         )
 
     with st.expander("📊 Szczegółowy skład wygenerowanych klastrów", expanded=False):
@@ -2314,7 +2265,7 @@ try:
                 data=csv_bytes,
                 file_name=f"sklady_klastrow_{metoda[:20].replace(' ', '_')}.csv",
                 mime="text/csv",
-                use_container_width=True,
+                width='stretch',
             )
         with col_exp_xlsx:
             bufor_xlsx = io.BytesIO()
@@ -2412,7 +2363,7 @@ try:
                 data=bufor_xlsx.getvalue(),
                 file_name=f"sklady_klastrow_{metoda[:20].replace(' ', '_')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
+                width='stretch',
             )
 
     # =================================================================
@@ -2604,7 +2555,7 @@ try:
                             .background_gradient(subset=[nazwa_kol_pewnosci],
                                                  cmap="RdYlGn",
                                                  vmin=0, vmax=100),
-                            hide_index=True, use_container_width=True,
+                            hide_index=True, width='stretch',
                         )
                         st.caption(opis_pewnosci)
                         niskie = df_wyniki_kl[df_wyniki_kl[nazwa_kol_pewnosci] < 50]
@@ -2645,7 +2596,7 @@ try:
                                 )
                                 st.dataframe(pd.DataFrame(wiersze_uciek),
                                              hide_index=True,
-                                             use_container_width=True)
+                                             width='stretch')
                             else:
                                 st.success(
                                     "✅ Wszystkie widma trafiły do swoich "
@@ -2662,7 +2613,7 @@ try:
                                 data=csv_kl,
                                 file_name="klasyfikacja_nowych_widm.csv",
                                 mime="text/csv",
-                                use_container_width=True,
+                                width='stretch',
                             )
                         with col_kl_xlsx:
                             bufor_kl = io.BytesIO()
@@ -2733,7 +2684,7 @@ try:
                                 data=bufor_kl.getvalue(),
                                 file_name="klasyfikacja_nowych_widm.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                use_container_width=True,
+                                width='stretch',
                             )
 
                     with col_kl2:
@@ -2785,7 +2736,7 @@ try:
                             yaxis=dict(showgrid=True, gridcolor="#e0e0e0"),
                             hovermode="closest",
                         )
-                        st.plotly_chart(fig_kl, use_container_width=True)
+                        st.plotly_chart(fig_kl, width='stretch')
 
             except Exception as blad_kl:
                 st.error(f"Nie udało się przetworzyć pliku z nowymi widmami: "
@@ -2841,7 +2792,7 @@ try:
                         anomalie[["Krzywa", "Klaster", "MSE od centroidu"]]
                         .style.format({"MSE od centroidu": "{:.4f}"})
                         .background_gradient(subset=["MSE od centroidu"], cmap="Reds"),
-                        hide_index=True, use_container_width=True,
+                        hide_index=True, width='stretch',
                     )
                     st.caption(
                         f"Próg anomalii: {prog_anomalii:.4f}  |  "
@@ -2855,7 +2806,7 @@ try:
                 st.dataframe(
                     df_mse_sorted[["Krzywa", "Klaster", "MSE od centroidu", "Anomalia"]]
                     .style.format({"MSE od centroidu": "{:.4f}"}),
-                    hide_index=True, use_container_width=True, height=320,
+                    hide_index=True, width='stretch', height=320,
                 )
         else:
             st.info("Brak klastrów do analizy (same odrzuty?).")
@@ -2906,7 +2857,7 @@ try:
                             df_czarne.style.format(
                                 {**fmt_loo, "Wpływ na ARI": "+{:.2f}%"}
                             ),
-                            hide_index=True, use_container_width=True,
+                            hide_index=True, width='stretch',
                         )
                     else:
                         st.info("Brak wyraźnych anomalii. Wszystkie krzywe "
@@ -2922,7 +2873,7 @@ try:
                             df_filary.style.format(
                                 {**fmt_loo, "Wpływ na ARI": "{:.2f}%"}
                             ),
-                            hide_index=True, use_container_width=True,
+                            hide_index=True, width='stretch',
                         )
                     else:
                         st.info("Brak kluczowych filarów — podział grup jest stabilny.")
@@ -3058,7 +3009,7 @@ try:
             df_edytowalny = st.data_editor(
                 df_lb,
                 hide_index=True,
-                use_container_width=True,
+                width='stretch',
                 column_config=konfiguracja_kolumn,
                 key=f"ranking_editor_{klucz_sel}",
             )
@@ -3072,7 +3023,7 @@ try:
                 if st.button(
                     "☑️ Odznacz wszystkie" if wszystkie_zaznaczone
                     else "✅ Wybierz wszystkie",
-                    use_container_width=True,
+                    width='stretch',
                     key="btn_wybierz_wszystkie",
                 ):
                     st.session_state[klucz_sel] = [not wszystkie_zaznaczone] * len(df_lb)
@@ -3080,7 +3031,7 @@ try:
             with col_btn2:
                 porownaj = st.button(
                     "📊 Porównaj zaznaczone",
-                    use_container_width=True,
+                    width='stretch',
                     disabled=len(zaznaczone) < 2,
                     key="btn_porownaj",
                 )
@@ -3129,7 +3080,7 @@ try:
                         yaxis=dict(range=[0, 115], title="Wartość (%) ± σ"),
                         xaxis=dict(title="Metryka"),
                     )
-                    st.plotly_chart(fig_por, use_container_width=True)
+                    st.plotly_chart(fig_por, width='stretch')
                     st.caption(
                         "Wąsy błędów = odchylenie standardowe po ziarnach. "
                         "Nakładające się wąsy dwóch metod oznaczają, że ich "
@@ -3150,7 +3101,7 @@ try:
                         df_styl.style
                         .apply(podswietl_max, subset=metryki_por)
                         .format(fmt_por),
-                        use_container_width=True,
+                        width='stretch',
                     )
 
                     najlepsza = df_por.loc[df_por["Średnia (%)"].idxmax(),
