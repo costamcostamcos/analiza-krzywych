@@ -1,8 +1,27 @@
-streamlit
+# streamlit PRZYPIĘTE WIDEŁKOWO do serii 1.x:
+#   - dolna granica >=1.59: od tej wersji działa parametr width='stretch'
+#     (używany w całym kodzie od v4.6); niższe wersje wywalą się na nim.
+#   - górna granica <2.0: chroni przed ewentualną przyszłą wersją 2.0,
+#     która może wprowadzić łamiące zmiany API. W ramach 1.x dostajemy
+#     poprawki i usprawnienia (np. nowsze opcje cache) bez ryzyka wielkiego
+#     skoku. Bez tego przypięcia każdy build łapie najnowszy streamlit i
+#     zmiana API mogłaby nagle popsuć apkę.
+streamlit>=1.59,<2.0
 pandas
-scikit-learn
+# numpy PRZYPIĘTE do <2.3: numba sięga do wewnętrznych struktur C NumPy i na
+# świeżo wydanej numpy 2.4.6 segfaultowała PRZY STARCIE (crash sekundy po
+# uruchomieniu serwera, odporny na reboot). numpy<2.3 daje 2.2.x — wersję,
+# na której numba jest stabilna. Bez tego przypięcia każdy build łapie inną
+# numpy i apka bywa niestabilna.
+numpy<2.3
 matplotlib
-openpyxl
-tslearn
-torch
 plotly
+scikit-learn
+scipy
+openpyxl
+# UMAP — na wersjach z gotowymi wheelami dla Pythona 3.12.
+# NIE przypinać starego umap-learn==0.5.12 (ciągnął numba==0.53.1 i
+# llvmlite==0.36.0, które nie działają na 3.12). Poniższe mają wheele cp312.
+umap-learn>=0.5.7
+numba>=0.60
+llvmlite>=0.43
